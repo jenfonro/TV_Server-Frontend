@@ -40,7 +40,7 @@ const props = defineProps({
 });
 
 const appVersion =
-  (typeof window !== 'undefined' && window.__TV_SERVER_VERSION__) || 'V1.0.0';
+  (typeof window !== 'undefined' && window.__TV_SERVER_VERSION__) || 'beta';
 
 const username = ref('');
 const password = ref('');

@@ -11,14 +11,15 @@
       <div v-if="buffering" class="m-buffer-ring" aria-hidden="true"></div>
 
       <div class="yt-ui" :class="{ 'yt-ui--show': overlayVisible }">
-      <div v-if="!isMobile" class="yt-bar" @click.stop @mousedown.stop @touchstart.stop>
-        <div class="yt-progress">
-          <div class="yt-progress__track" aria-hidden="true">
-            <div class="yt-progress__fill" :style="{ '--yt-progress-p': progressFrac }" />
-          </div>
-          <input
-            class="yt-progress__range"
-            type="range"
+	      <div v-if="!isMobile" class="yt-bar" @click.stop @mousedown.stop @touchstart.stop>
+	        <div class="yt-progress" :style="{ '--yt-progress-p': progressFrac, '--yt-buffer-p': bufferedFrac }">
+	          <div class="yt-progress__track" aria-hidden="true">
+	            <div class="yt-progress__buffer" />
+	            <div class="yt-progress__fill" />
+	          </div>
+	          <input
+	            class="yt-progress__range"
+	            type="range"
             min="0"
             :max="Math.max(duration, 0)"
             step="0.1"
@@ -232,13 +233,14 @@
           </div>
         </div>
 
-        <div class="yt-progress m-progress">
-          <div class="yt-progress__track" aria-hidden="true">
-            <div class="yt-progress__fill" :style="{ '--yt-progress-p': progressFrac }" />
-          </div>
-          <input
-            class="yt-progress__range"
-            type="range"
+	        <div class="yt-progress m-progress" :style="{ '--yt-progress-p': progressFrac, '--yt-buffer-p': bufferedFrac }">
+	          <div class="yt-progress__track" aria-hidden="true">
+	            <div class="yt-progress__buffer" />
+	            <div class="yt-progress__fill" />
+	          </div>
+	          <input
+	            class="yt-progress__range"
+	            type="range"
             min="0"
             :max="Math.max(duration, 0)"
             step="0.1"
@@ -330,6 +332,7 @@ let desktopClickTimer = 0;
 const playing = ref(false);
 const currentTime = ref(0);
 const duration = ref(0);
+const bufferedEnd = ref(0);
 const volume = ref(0.7);
 const muted = ref(false);
 const buffering = ref(false);
@@ -391,6 +394,57 @@ const progressFrac = computed(() => {
   if (!Number.isFinite(t) || t <= 0) return 0;
   return Math.max(0, Math.min(1, t / d));
 });
+
+const bufferedFrac = computed(() => {
+  const d = Number(duration.value);
+  const e = Number(bufferedEnd.value);
+  if (!Number.isFinite(d) || d <= 0) return 0;
+  if (!Number.isFinite(e) || e <= 0) return 0;
+  return Math.max(0, Math.min(1, e / d));
+});
+
+let bufferUpdateRaf = 0;
+let bufferUpdatePending = 0;
+const computeBufferedEnd = () => {
+  try {
+    const v = art && art.video ? art.video : null;
+    if (!v) return 0;
+    const t = Number.isFinite(v.currentTime) ? v.currentTime : Number(currentTime.value) || 0;
+    const b = v.buffered;
+    if (!b || typeof b.length !== 'number' || b.length <= 0) return 0;
+    const eps = 0.15;
+    let maxEnd = 0;
+    let inRangeEnd = 0;
+    for (let i = 0; i < b.length; i += 1) {
+      let start = 0;
+      let end = 0;
+      try {
+        start = b.start(i);
+        end = b.end(i);
+      } catch (_e) {
+        continue;
+      }
+      if (Number.isFinite(end)) maxEnd = Math.max(maxEnd, end);
+      if (Number.isFinite(start) && Number.isFinite(end) && t + eps >= start && t - eps <= end) {
+        inRangeEnd = Math.max(inRangeEnd, end);
+      }
+    }
+    return inRangeEnd || maxEnd || 0;
+  } catch (_e) {
+    return 0;
+  }
+};
+const scheduleBufferedSync = () => {
+  if (!art) return;
+  bufferUpdatePending = 1;
+  if (bufferUpdateRaf) return;
+  bufferUpdateRaf = window.requestAnimationFrame(() => {
+    bufferUpdateRaf = 0;
+    if (!bufferUpdatePending) return;
+    bufferUpdatePending = 0;
+    bufferedEnd.value = computeBufferedEnd();
+  });
+};
 
 const isUiControlTarget = (target) => {
   if (!target || typeof target.closest !== 'function') return false;
@@ -468,6 +522,11 @@ const detectVideoFormat = (url) => {
   } catch (_e) {}
   timeUpdateRaf = 0;
   timeUpdatePending = 0;
+  try {
+    if (bufferUpdateRaf) window.cancelAnimationFrame(bufferUpdateRaf);
+  } catch (_e) {}
+  bufferUpdateRaf = 0;
+  bufferUpdatePending = 0;
   try {
     if (hideTimer) window.clearTimeout(hideTimer);
     hideTimer = 0;
@@ -549,18 +608,25 @@ const detectVideoFormat = (url) => {
   teleportTarget.value = null;
   isPip.value = false;
   playing.value = false;
+  bufferedEnd.value = 0;
 };
 
 	const createCustomPlayer = {
-	  async hls(videoEl, url, headers) {
-	    const Hls = await loadHls();
-	    if (!Hls || !Hls.isSupported || !Hls.isSupported()) return null;
-	    const withCredentials = false;
-	    const hls = new Hls({
-      // Reduce reconnect/retry attempts to avoid long "reconnecting" loops on unstable networks.
-      manifestLoadingMaxRetry: 2,
-      levelLoadingMaxRetry: 2,
-      fragLoadingMaxRetry: 2,
+		  async hls(videoEl, url, headers) {
+		    const Hls = await loadHls();
+		    if (!Hls || !Hls.isSupported || !Hls.isSupported()) return null;
+		    const withCredentials = false;
+		    const bufferGoalSeconds = 60;
+		    const backBufferSeconds = 75;
+		    const hls = new Hls({
+	      maxBufferLength: bufferGoalSeconds,
+	      maxMaxBufferLength: bufferGoalSeconds * 2,
+	      backBufferLength: backBufferSeconds,
+	      maxBufferSize: 200 * 1000 * 1000,
+	      // Reduce reconnect/retry attempts to avoid long "reconnecting" loops on unstable networks.
+	      manifestLoadingMaxRetry: 2,
+	      levelLoadingMaxRetry: 2,
+	      fragLoadingMaxRetry: 2,
       keyLoadingMaxRetry: 2,
       xhrSetup(xhr) {
         xhr.withCredentials = withCredentials;
@@ -578,33 +644,49 @@ const detectVideoFormat = (url) => {
 	    hls.attachMedia(videoEl);
 	    return { hls };
 	  },
-	  async flv(videoEl, url, headers) {
-	    const flvjs = await loadFlv();
-	    if (!flvjs || !flvjs.isSupported || !flvjs.isSupported()) return null;
-	    const withCredentials = false;
-	    const flv = flvjs.createPlayer(
-      { type: 'flv', isLive: false, url, withCredentials },
-      {
-        enableWorker: false,
-        enableStashBuffer: false,
-        autoCleanupSourceBuffer: true,
-        reuseRedirectedURL: true,
-        headers: headers || {},
-      }
-    );
+		  async flv(videoEl, url, headers) {
+		    const flvjs = await loadFlv();
+		    if (!flvjs || !flvjs.isSupported || !flvjs.isSupported()) return null;
+		    const withCredentials = false;
+		    const bufferGoalSeconds = 60;
+		    const backBufferSeconds = 75;
+		    const flv = flvjs.createPlayer(
+	      { type: 'flv', isLive: false, url, withCredentials },
+	      {
+	        enableWorker: false,
+	        enableStashBuffer: true,
+	        stashInitialSize: 1024 * 1024,
+	        autoCleanupSourceBuffer: true,
+	        lazyLoad: true,
+	        lazyLoadMaxDuration: bufferGoalSeconds,
+	        lazyLoadRecoverDuration: Math.max(10, Math.floor(bufferGoalSeconds / 2)),
+	        autoCleanupMaxBackwardDuration: backBufferSeconds,
+	        reuseRedirectedURL: true,
+	        headers: headers || {},
+	      }
+	    );
 	    flv.attachMediaElement(videoEl);
 	    flv.load();
 	    return { flv };
 	  },
-	  async dash(videoEl, url, headers) {
-	    const shaka = await loadShaka();
-	    if (!shaka || !shaka.Player || !shaka.Player.isBrowserSupported || !shaka.Player.isBrowserSupported()) return null;
-	    const withCredentials = false;
-	    const dash = new shaka.Player(videoEl);
-    dash.getNetworkingEngine().registerRequestFilter((type, request) => {
-      request.allowCrossSiteCredentials = withCredentials;
-      if (!headers || typeof headers !== 'object') return;
-      Object.keys(headers).forEach((k) => {
+		  async dash(videoEl, url, headers) {
+		    const shaka = await loadShaka();
+		    if (!shaka || !shaka.Player || !shaka.Player.isBrowserSupported || !shaka.Player.isBrowserSupported()) return null;
+		    const withCredentials = false;
+		    const dash = new shaka.Player(videoEl);
+		    try {
+		      dash.configure({
+		        streaming: {
+		          bufferingGoal: 60,
+		          rebufferingGoal: 2,
+		          bufferBehind: 75,
+		        },
+		      });
+		    } catch (_e) {}
+	    dash.getNetworkingEngine().registerRequestFilter((type, request) => {
+	      request.allowCrossSiteCredentials = withCredentials;
+	      if (!headers || typeof headers !== 'object') return;
+	      Object.keys(headers).forEach((k) => {
         const v = headers[k];
         if (v == null) return;
         request.headers[k] = String(v);
@@ -835,10 +917,10 @@ const detectVideoFormat = (url) => {
 		      v.setAttribute('playsinline', '');
 		      v.setAttribute('webkit-playsinline', '');
 		      v.setAttribute('x-webkit-airplay', 'allow');
-	      v.setAttribute('preload', 'metadata');
-      try {
-        v.preload = 'metadata';
-      } catch (_e) {}
+		      v.setAttribute('preload', 'auto');
+	      try {
+	        v.preload = 'auto';
+	      } catch (_e) {}
       try {
         v.load();
       } catch (_e) {}
@@ -851,11 +933,11 @@ const detectVideoFormat = (url) => {
         } catch (_e) {}
         if (typeof v.readyState === 'number' && v.readyState >= 1) emitMetaOnce();
       };
-      const onError = () => {
-        try {
-          const err = v && v.error ? v.error : null;
-          const code = err && typeof err.code === 'number' ? err.code : 0;
-          let msg = '播放失败';
+	      const onError = () => {
+	        try {
+	          const err = v && v.error ? v.error : null;
+	          const code = err && typeof err.code === 'number' ? err.code : 0;
+	          let msg = '播放失败';
           if (code === 2) msg = '播放失败：网络错误';
           else if (code === 3) msg = '播放失败：解码错误（可能不支持该编码/清晰度）';
           else if (code === 4) msg = '播放失败：媒体不可播放（可能不支持该编码/清晰度）';
@@ -864,18 +946,25 @@ const detectVideoFormat = (url) => {
           try {
             emit('error', { code: 0, message: '播放失败' });
           } catch (_ignored) {}
-        }
-      };
-      v.addEventListener('loadedmetadata', onLoadedMetadata);
-      v.addEventListener('durationchange', onDurationChange);
-      v.addEventListener('error', onError);
-      cleanupNativeVideoListeners = () => {
-        try {
-          v.removeEventListener('loadedmetadata', onLoadedMetadata);
-          v.removeEventListener('durationchange', onDurationChange);
-          v.removeEventListener('error', onError);
-        } catch (_e) {}
-      };
+	        }
+	      };
+	      const onProgress = () => scheduleBufferedSync();
+	      v.addEventListener('loadedmetadata', onLoadedMetadata);
+	      v.addEventListener('durationchange', onDurationChange);
+	      v.addEventListener('progress', onProgress);
+	      v.addEventListener('seeking', onProgress);
+	      v.addEventListener('seeked', onProgress);
+	      v.addEventListener('error', onError);
+	      cleanupNativeVideoListeners = () => {
+	        try {
+	          v.removeEventListener('loadedmetadata', onLoadedMetadata);
+	          v.removeEventListener('durationchange', onDurationChange);
+	          v.removeEventListener('progress', onProgress);
+	          v.removeEventListener('seeking', onProgress);
+	          v.removeEventListener('seeked', onProgress);
+	          v.removeEventListener('error', onError);
+	        } catch (_e) {}
+	      };
     }
   } catch (_e) {}
 
@@ -891,29 +980,33 @@ const detectVideoFormat = (url) => {
   muted.value = art.muted || false;
   playbackRate.value = art.playbackRate || 1;
   aspectRatio.value = art.aspectRatio || 'default';
+  scheduleBufferedSync();
 
   art.on('video:timeupdate', () => {
     timeUpdatePending = art.currentTime || 0;
     if (timeUpdateRaf) return;
-    timeUpdateRaf = window.requestAnimationFrame(() => {
-      timeUpdateRaf = 0;
-      const nextTime = timeUpdatePending || 0;
-      if (buffering.value && nextTime > (currentTime.value || 0) + 0.05) {
-        buffering.value = false;
-      }
-      currentTime.value = nextTime;
-    });
-  });
-  art.on('video:loadedmetadata', () => {
-    try {
-      const d = art.duration || 0;
-      duration.value = Number.isFinite(d) ? d : 0;
-    } catch (_e) {}
-    emitMetaOnce();
-  });
-  art.on('video:durationchange', () => {
-    duration.value = art.duration || 0;
-  });
+	    timeUpdateRaf = window.requestAnimationFrame(() => {
+	      timeUpdateRaf = 0;
+	      const nextTime = timeUpdatePending || 0;
+	      if (buffering.value && nextTime > (currentTime.value || 0) + 0.05) {
+	        buffering.value = false;
+	      }
+	      currentTime.value = nextTime;
+	      scheduleBufferedSync();
+	    });
+	  });
+	  art.on('video:loadedmetadata', () => {
+	    try {
+	      const d = art.duration || 0;
+	      duration.value = Number.isFinite(d) ? d : 0;
+	    } catch (_e) {}
+	    emitMetaOnce();
+	    scheduleBufferedSync();
+	  });
+	  art.on('video:durationchange', () => {
+	    duration.value = art.duration || 0;
+	    scheduleBufferedSync();
+	  });
   art.on('video:volumechange', () => {
     volume.value = art.volume || 0;
     muted.value = art.muted || false;
@@ -921,11 +1014,12 @@ const detectVideoFormat = (url) => {
   art.on('video:ratechange', () => {
     playbackRate.value = art.playbackRate || 1;
   });
-  art.on('video:play', () => {
-    playing.value = true;
-    buffering.value = false;
-    showUiTemporarily();
-  });
+	  art.on('video:play', () => {
+	    playing.value = true;
+	    buffering.value = false;
+	    showUiTemporarily();
+	    scheduleBufferedSync();
+	  });
   art.on('video:pause', () => {
     playing.value = false;
     buffering.value = false;
@@ -939,15 +1033,17 @@ const detectVideoFormat = (url) => {
     buffering.value = true;
     showUiTemporarily();
   });
-  art.on('video:playing', () => {
-    buffering.value = false;
-    showUiTemporarily();
-    emitMetaOnce();
-  });
-  art.on('video:canplay', () => {
-    buffering.value = false;
-    emitMetaOnce();
-  });
+	  art.on('video:playing', () => {
+	    buffering.value = false;
+	    showUiTemporarily();
+	    emitMetaOnce();
+	    scheduleBufferedSync();
+	  });
+	  art.on('video:canplay', () => {
+	    buffering.value = false;
+	    emitMetaOnce();
+	    scheduleBufferedSync();
+	  });
   art.on('video:error', () => {
     buffering.value = false;
     uiVisible.value = true;
@@ -1026,8 +1122,9 @@ const seekBySeconds = (deltaSeconds) => {
   if (!art) return;
   const d = Number.isFinite(duration.value) && duration.value > 0 ? duration.value : (art.duration || 0);
   const cur = Number.isFinite(art.currentTime) ? art.currentTime : currentTime.value || 0;
-  const next = Math.max(0, Math.min(d || 0, cur + Number(deltaSeconds || 0)));
-  art.currentTime = next;
+ const next = Math.max(0, Math.min(d || 0, cur + Number(deltaSeconds || 0)));
+ art.currentTime = next;
+ scheduleBufferedSync();
 };
 
 const emitEpisodeDelta = (delta) => {
@@ -1052,6 +1149,7 @@ const onSeek = (e) => {
   const v = e && e.target ? Number(e.target.value) : NaN;
   if (!art || !Number.isFinite(v)) return;
   art.currentTime = Math.max(0, Math.min(duration.value || 0, v));
+  scheduleBufferedSync();
 };
 
 const setRate = (r) => {
@@ -1217,18 +1315,18 @@ onMounted(() => {
           showUiTemporarily();
           return;
         }
-        if (key === 'ArrowLeft') {
-          evt.preventDefault();
-          seekBySeconds(-5);
-          showUiTemporarily();
-          return;
-        }
-        if (key === 'ArrowRight') {
-          evt.preventDefault();
-          seekBySeconds(5);
-          showUiTemporarily();
-          return;
-        }
+	        if (key === 'ArrowLeft') {
+	          evt.preventDefault();
+	          seekBySeconds(-60);
+	          showUiTemporarily();
+	          return;
+	        }
+	        if (key === 'ArrowRight') {
+	          evt.preventDefault();
+	          seekBySeconds(60);
+	          showUiTemporarily();
+	          return;
+	        }
       };
       window.addEventListener('keydown', onKeyDown, true);
 
@@ -1462,6 +1560,7 @@ defineExpose({ destroy: destroyNow });
   --yt-progress-track-h: 8px;
   --yt-progress-thumb-h: 14px;
   --yt-progress-p: 0;
+  --yt-buffer-p: 0;
   height: var(--yt-progress-thumb-h);
   pointer-events: auto;
   cursor: pointer;
@@ -1479,7 +1578,23 @@ defineExpose({ destroy: destroyNow });
   pointer-events: none;
 }
 
+.yt-progress__buffer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: calc(
+    (var(--yt-buffer-p) * (100% - var(--yt-progress-thumb-h))) + (var(--yt-progress-thumb-h) / 2)
+  );
+  max-width: 100%;
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+}
+
 .yt-progress__fill {
+  position: absolute;
+  left: 0;
+  top: 0;
   height: 100%;
   width: calc(
     (var(--yt-progress-p) * (100% - var(--yt-progress-thumb-h))) + (var(--yt-progress-thumb-h) / 2)

@@ -489,7 +489,7 @@ const props = defineProps({ bootstrap: { type: Object, required: true } });
 const bootstrap = props.bootstrap;
 
 const appVersion =
-  (typeof window !== 'undefined' && window.__TV_SERVER_VERSION__) || 'V1.0.0';
+  (typeof window !== 'undefined' && window.__TV_SERVER_VERSION__) || 'beta';
 
 const LAST_SITE_KEY = 'tv_server_last_site_key';
 const LAST_SITE_NAME_KEY = 'tv_server_last_site_name';
