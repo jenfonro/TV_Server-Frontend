@@ -1438,6 +1438,113 @@ const compiledMagicEpisodeRules = computed(() => {
 
 const hasMagicEpisodeRules = computed(() => compiledMagicEpisodeRules.value.length > 0);
 
+const cleanMagicEpisodeText = (text, cleanRules) => {
+  const s = typeof text === 'string' ? text.trim() : '';
+  if (!s || !Array.isArray(cleanRules) || !cleanRules.length) return s;
+  try {
+    let out = s;
+    cleanRules.forEach((re) => {
+      if (!re) return;
+      out = out.replace(re, '');
+    });
+    return out.replace(/\s+/g, ' ').trim();
+  } catch (_e) {
+    return s;
+  }
+};
+
+const extractSeasonEpisodeFromText = (text, rules, cleanRules) => {
+  const s = cleanMagicEpisodeText(text, cleanRules);
+  if (!s || !Array.isArray(rules) || !rules.length) return { season: 0, episode: 0 };
+  for (let i = 0; i < rules.length; i += 1) {
+    const rule = rules[i];
+    const re = rule && rule.re ? rule.re : null;
+    if (!re) continue;
+    const m = s.match(re);
+    if (!m) continue;
+
+    if (rule && rule.replace) {
+      let normalized = '';
+      try {
+        normalized = s.replace(re, rule.replace);
+      } catch (_e) {
+        normalized = '';
+      }
+      const mm = normalized.match(/(?:S(\d{1,2}))?\s*E(\d{1,3})/i);
+      if (mm && mm[2]) {
+        const seasonRaw = mm[1] ? Number.parseInt(String(mm[1]), 10) : 0;
+        const episodeRaw = Number.parseInt(String(mm[2]), 10);
+        const season = Number.isFinite(seasonRaw) && seasonRaw >= 0 && seasonRaw <= 99 ? seasonRaw : 0;
+        const episode = Number.isFinite(episodeRaw) && episodeRaw >= 1 && episodeRaw <= 99999 ? episodeRaw : 0;
+        if (episode) return { season, episode };
+      }
+    }
+
+    const seasonFrom = (val) => {
+      const ss = typeof val === 'string' ? val : String(val || '');
+      const sm = ss.match(/S(\d{1,2})/i);
+      if (!sm || !sm[1]) return 0;
+      const n = Number.parseInt(String(sm[1]), 10);
+      return Number.isFinite(n) && n >= 0 && n <= 99 ? n : 0;
+    };
+    const picked =
+      (m.length > 2 && m[2] != null ? String(m[2]) : '') ||
+      (m.length > 1 && m[1] != null ? String(m[1]) : '') ||
+      String(m[0] || '');
+    const season = seasonFrom(m.length > 1 ? m[1] : '') || seasonFrom(picked) || seasonFrom(m[0] || '') || 0;
+    const digits = String(picked || '').trim().replace(/\D+/g, '');
+    if (!digits) continue;
+    const episode = Number.parseInt(digits, 10);
+    if (Number.isFinite(episode) && episode >= 1 && episode <= 99999) return { season, episode };
+  }
+  return { season: 0, episode: 0 };
+};
+
+const extractSeasonEpisodeFromCandidates = (candidates, rules, cleanRules) => {
+  const list = Array.isArray(candidates) ? candidates : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const r = extractSeasonEpisodeFromText(list[i], rules, cleanRules);
+    if (r && r.episode) return r;
+  }
+  return { season: 0, episode: 0 };
+};
+
+const parseLooseSeasonEpisodeFromText = (text) => {
+  const s = typeof text === 'string' ? text.trim() : '';
+  if (!s) return { season: 0, episode: 0 };
+
+  const se = s.match(/(?:S(\d{1,2}))?\s*E(\d{1,5})/i);
+  if (se && se[2]) {
+    const seasonRaw = se[1] ? Number.parseInt(String(se[1]), 10) : 0;
+    const episodeRaw = Number.parseInt(String(se[2]), 10);
+    const season = Number.isFinite(seasonRaw) && seasonRaw >= 0 && seasonRaw <= 99 ? seasonRaw : 0;
+    const episode = Number.isFinite(episodeRaw) && episodeRaw >= 1 && episodeRaw <= 99999 ? episodeRaw : 0;
+    if (episode) return { season, episode };
+  }
+
+  const cn = s.match(/第\s*(\d{1,5})\s*(?:集|话|回)/);
+  if (cn && cn[1]) {
+    const episode = Number.parseInt(String(cn[1]), 10);
+    if (Number.isFinite(episode) && episode >= 1 && episode <= 99999) return { season: 0, episode };
+  }
+
+  const ep = s.match(/(?:ep|episode|e)\s*(\d{1,5})/i);
+  if (ep && ep[1]) {
+    const episode = Number.parseInt(String(ep[1]), 10);
+    if (Number.isFinite(episode) && episode >= 1 && episode <= 99999) return { season: 0, episode };
+  }
+
+  const groups = s.match(/\d{1,5}/g) || [];
+  if (!groups.length) return { season: 0, episode: 0 };
+  for (let i = groups.length - 1; i >= 0; i -= 1) {
+    const n = Number.parseInt(String(groups[i]), 10);
+    if (!Number.isFinite(n) || n <= 0 || n > 99999) continue;
+    if (n >= 1900 && n <= 2100) continue;
+    return { season: 0, episode: n };
+  }
+  return { season: 0, episode: 0 };
+};
+
 // For magic matching:
 // - raw list ALWAYS shows all episodes (no filtering)
 // - episode buttons ONLY show episodes that match a rule (extracting season/episode)
@@ -1448,71 +1555,6 @@ const episodeMatchByIndex = computed(() => {
   if (!rules.length) return eps.map((_ep, idx) => ({ season: 0, episode: idx + 1 }));
   const cleanRules = compiledMagicEpisodeCleanRegexRules.value;
 
-  const cleanText = (text) => {
-    const s = typeof text === 'string' ? text.trim() : '';
-    if (!s || !Array.isArray(cleanRules) || !cleanRules.length) return s;
-    try {
-      let out = s;
-      cleanRules.forEach((re) => {
-        if (!re) return;
-        out = out.replace(re, '');
-      });
-      return out.replace(/\s+/g, ' ').trim();
-    } catch (_e) {
-      return s;
-    }
-  };
-
-  const extractSeasonEpisodeFrom = (text) => {
-    const s = cleanText(text);
-    if (!s) return { season: 0, episode: 0 };
-    for (let i = 0; i < rules.length; i += 1) {
-      const rule = rules[i];
-      const re = rule && rule.re ? rule.re : null;
-      if (!re) continue;
-      const m = s.match(re);
-      if (!m) continue;
-      // If the rule provides a replace template, normalize first (e.g. `S01E02.mp4`),
-      // then extract the `Sxx` + `Eyy` parts.
-      if (rule && rule.replace) {
-        let normalized = '';
-        try {
-          normalized = s.replace(re, rule.replace);
-        } catch (_e) {
-          normalized = '';
-        }
-        const mm = normalized.match(/(?:S(\d{1,2}))?\s*E(\d{1,3})/i);
-        if (mm && mm[2]) {
-          const seasonRaw = mm[1] ? Number.parseInt(String(mm[1]), 10) : 0;
-          const episodeRaw = Number.parseInt(String(mm[2]), 10);
-          const season = Number.isFinite(seasonRaw) && seasonRaw >= 0 && seasonRaw <= 99 ? seasonRaw : 0;
-          const episode = Number.isFinite(episodeRaw) && episodeRaw >= 1 && episodeRaw <= 99999 ? episodeRaw : 0;
-          if (episode) return { season, episode };
-        }
-      }
-
-      // Fallback: try to extract season (Sxx) and episode digits from captures.
-      const seasonFrom = (val) => {
-        const ss = typeof val === 'string' ? val : String(val || '');
-        const sm = ss.match(/S(\d{1,2})/i);
-        if (!sm || !sm[1]) return 0;
-        const n = Number.parseInt(String(sm[1]), 10);
-        return Number.isFinite(n) && n >= 0 && n <= 99 ? n : 0;
-      };
-      const picked =
-        (m.length > 2 && m[2] != null ? String(m[2]) : '') ||
-        (m.length > 1 && m[1] != null ? String(m[1]) : '') ||
-        String(m[0] || '');
-      const season =
-        seasonFrom(m.length > 1 ? m[1] : '') || seasonFrom(picked) || seasonFrom(m[0] || '') || 0;
-      const digits = String(picked || '').trim().replace(/\D+/g, '');
-      if (!digits) continue;
-      const episode = Number.parseInt(digits, 10);
-      if (Number.isFinite(episode) && episode >= 1 && episode <= 99999) return { season, episode };
-    }
-    return { season: 0, episode: 0 };
-  };
-
   return eps.map((ep, idx) => {
     const candidates = [];
     if (ep && ep.name != null) candidates.push(String(ep.name));
@@ -1520,13 +1562,55 @@ const episodeMatchByIndex = computed(() => {
       const rawNames = extractRawNamesFromEpisodeUrl(String(ep.url));
       if (rawNames[0]) candidates.push(rawNames[0]);
     }
-    for (let i = 0; i < candidates.length; i += 1) {
-      const r = extractSeasonEpisodeFrom(candidates[i]);
-      if (r && r.episode) return r;
-    }
-    return { season: 0, episode: 0 };
+    return extractSeasonEpisodeFromCandidates(candidates, rules, cleanRules);
   });
 });
+
+const pickResumeEpisodeIndex = ({ wantedSeason = 0, wantedEpisode = 0, wantedIndex = 0 } = {}) => {
+  const eps = selectedEpisodes.value;
+  const total = Array.isArray(eps) ? eps.length : 0;
+  if (!total) return 0;
+
+  const idxRaw = Number.isFinite(Number(wantedIndex)) ? Math.floor(Number(wantedIndex)) : 0;
+  const idxFallback = Math.max(0, Math.min(idxRaw, total - 1));
+
+  const desiredEpisodeRaw = Number.isFinite(Number(wantedEpisode)) ? Math.floor(Number(wantedEpisode)) : 0;
+  const desiredEpisode = desiredEpisodeRaw > 0 ? desiredEpisodeRaw : 0;
+  if (!desiredEpisode) return idxFallback;
+
+  const desiredSeasonRaw = Number.isFinite(Number(wantedSeason)) ? Math.floor(Number(wantedSeason)) : 0;
+  const desiredSeason = desiredSeasonRaw > 0 ? desiredSeasonRaw : 0;
+
+  const matches = episodeMatchByIndex.value;
+  const list = Array.isArray(matches) ? matches : [];
+
+  const pickFromMatches = (seasonConstraint) => {
+    let bestBelow = null; // { epNo, idx }
+    let bestAbove = null; // { epNo, idx }
+    for (let i = 0; i < list.length; i += 1) {
+      const m = list[i];
+      const epNo = m && Number.isFinite(Number(m.episode)) ? Math.floor(Number(m.episode)) : 0;
+      if (epNo <= 0) continue;
+      const seasonNo = m && Number.isFinite(Number(m.season)) ? Math.floor(Number(m.season)) : 0;
+      if (seasonConstraint > 0 && seasonNo !== seasonConstraint) continue;
+
+      if (epNo <= desiredEpisode) {
+        if (!bestBelow || epNo > bestBelow.epNo) bestBelow = { epNo, idx: i };
+      } else {
+        if (!bestAbove || epNo < bestAbove.epNo) bestAbove = { epNo, idx: i };
+      }
+    }
+    if (bestBelow) return bestBelow.idx;
+    if (bestAbove) return bestAbove.idx;
+    return null;
+  };
+
+  const picked = pickFromMatches(desiredSeason);
+  if (picked != null) return picked;
+  const pickedAnySeason = pickFromMatches(0);
+  if (pickedAnySeason != null) return pickedAnySeason;
+  return idxFallback;
+};
 
 const allDisplayedEpisodes = computed(() => {
   const eps = selectedEpisodes.value;
@@ -2462,6 +2546,7 @@ watch(
       const wantedPanLabel = typeof resumeHistory.value.panLabel === 'string' ? resumeHistory.value.panLabel.trim() : '';
       const wantedIdxRaw = resumeHistory.value.episodeIndex != null ? Number(resumeHistory.value.episodeIndex) : 0;
       const wantedIdx = Number.isFinite(wantedIdxRaw) && wantedIdxRaw >= 0 ? Math.floor(wantedIdxRaw) : 0;
+      const wantedEpName = typeof resumeHistory.value.episodeName === 'string' ? resumeHistory.value.episodeName.trim() : '';
       const normalize = (label) => String(label || '').trim().replace(/#\d{1,3}\s*$/i, '').trim().toLowerCase();
 
       let target = null;
@@ -2471,10 +2556,20 @@ watch(
         if (target && target.key) selectedPan.value = target.key;
       }
 
-      const src = target || selectedPanSource.value || null;
-      const total = src && Array.isArray(src.episodes) ? src.episodes.length : 0;
-      const clamped = total > 0 ? Math.max(0, Math.min(wantedIdx, total - 1)) : 0;
-      selectedEpisodeIndex.value = clamped;
+      const rules = compiledMagicEpisodeRules.value;
+      const cleanRules = compiledMagicEpisodeCleanRegexRules.value;
+      let wanted = { season: 0, episode: 0 };
+      if (wantedEpName) {
+        wanted = extractSeasonEpisodeFromCandidates([wantedEpName], rules, cleanRules);
+        if (!wanted.episode) wanted = parseLooseSeasonEpisodeFromText(wantedEpName);
+      }
+      if (!wanted.episode) wanted = { season: 0, episode: wantedIdx + 1 };
+
+      selectedEpisodeIndex.value = pickResumeEpisodeIndex({
+        wantedSeason: wanted.season,
+        wantedEpisode: wanted.episode,
+        wantedIndex: wantedIdx,
+      });
 
       resumeHistoryApplied.value = true;
       if (prevPan !== selectedPan.value || prevIdx !== selectedEpisodeIndex.value) return;
