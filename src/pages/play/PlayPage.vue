@@ -1612,6 +1612,53 @@ const pickResumeEpisodeIndex = ({ wantedSeason = 0, wantedEpisode = 0, wantedInd
   return idxFallback;
 };
 
+const normalizeEpisodeNameForExactMatch = (name) => {
+  const s = typeof name === 'string' ? name : String(name || '');
+  return s.trim().replace(/\s+/g, ' ').toLowerCase();
+};
+
+const pickExactResumeEpisodeIndexFromName = (episodeName, cleanRules) => {
+  const want = normalizeEpisodeNameForExactMatch(episodeName);
+  if (!want) return null;
+  const eps = selectedEpisodes.value;
+  const total = Array.isArray(eps) ? eps.length : 0;
+  if (!total) return null;
+
+  const candidatesOf = (ep) => {
+    const out = [];
+    if (ep && ep.name != null) out.push(String(ep.name));
+    if (ep && ep.url != null) {
+      const rawNames = extractRawNamesFromEpisodeUrl(String(ep.url));
+      rawNames.forEach((n) => {
+        if (n) out.push(String(n));
+      });
+    }
+    return out;
+  };
+
+  // Pass 1: strict normalized equality.
+  for (let idx = 0; idx < eps.length; idx += 1) {
+    const list = candidatesOf(eps[idx]);
+    for (let i = 0; i < list.length; i += 1) {
+      if (normalizeEpisodeNameForExactMatch(list[i]) === want) return idx;
+    }
+  }
+
+  // Pass 2: equality after applying user's clean regex rules (best-effort).
+  const wantClean = normalizeEpisodeNameForExactMatch(cleanMagicEpisodeText(episodeName, cleanRules));
+  if (wantClean) {
+    for (let idx = 0; idx < eps.length; idx += 1) {
+      const list = candidatesOf(eps[idx]);
+      for (let i = 0; i < list.length; i += 1) {
+        const candClean = normalizeEpisodeNameForExactMatch(cleanMagicEpisodeText(list[i], cleanRules));
+        if (candClean === wantClean) return idx;
+      }
+    }
+  }
+
+  return null;
+};
+
 const allDisplayedEpisodes = computed(() => {
   const eps = selectedEpisodes.value;
   const total = eps.length;
@@ -2558,18 +2605,23 @@ watch(
 
       const rules = compiledMagicEpisodeRules.value;
       const cleanRules = compiledMagicEpisodeCleanRegexRules.value;
-      let wanted = { season: 0, episode: 0 };
-      if (wantedEpName) {
-        wanted = extractSeasonEpisodeFromCandidates([wantedEpName], rules, cleanRules);
-        if (!wanted.episode) wanted = parseLooseSeasonEpisodeFromText(wantedEpName);
-      }
-      if (!wanted.episode) wanted = { season: 0, episode: wantedIdx + 1 };
+      const exactIdx = wantedEpName ? pickExactResumeEpisodeIndexFromName(wantedEpName, cleanRules) : null;
+      if (exactIdx != null) {
+        selectedEpisodeIndex.value = exactIdx;
+      } else {
+        let wanted = { season: 0, episode: 0 };
+        if (wantedEpName) {
+          wanted = extractSeasonEpisodeFromCandidates([wantedEpName], rules, cleanRules);
+          if (!wanted.episode) wanted = parseLooseSeasonEpisodeFromText(wantedEpName);
+        }
+        if (!wanted.episode) wanted = { season: 0, episode: wantedIdx + 1 };
 
-      selectedEpisodeIndex.value = pickResumeEpisodeIndex({
-        wantedSeason: wanted.season,
-        wantedEpisode: wanted.episode,
-        wantedIndex: wantedIdx,
-      });
+        selectedEpisodeIndex.value = pickResumeEpisodeIndex({
+          wantedSeason: wanted.season,
+          wantedEpisode: wanted.episode,
+          wantedIndex: wantedIdx,
+        });
+      }
 
       resumeHistoryApplied.value = true;
       if (prevPan !== selectedPan.value || prevIdx !== selectedEpisodeIndex.value) return;
