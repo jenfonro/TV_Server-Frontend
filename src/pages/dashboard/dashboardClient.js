@@ -2315,7 +2315,6 @@ export function initDashboardPage(bootstrap = {}) {
           return;
         }
 
-        // Even if validation fails, keep settings saved (per requirement).
         if (hasAny) {
           try {
             await validateOpenListMount({
