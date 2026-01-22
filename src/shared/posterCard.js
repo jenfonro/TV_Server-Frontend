@@ -73,6 +73,7 @@ export function createPosterCard({
   cardClass = 'douban-card group w-full',
   io = null,
   detail,
+  onActivate,
   title,
   poster,
   remark,
@@ -81,7 +82,8 @@ export function createPosterCard({
   overlays = true,
 } = {}) {
   const d = detail && typeof detail === 'object' ? detail : null;
-  if (!d) return null;
+  const activateOverride = typeof onActivate === 'function' ? onActivate : null;
+  if (!d && !activateOverride) return null;
 
   const wrapper = wrapperEl || document.createElement('div');
   if (wrapperClass) wrapper.className = wrapperClass;
@@ -94,6 +96,10 @@ export function createPosterCard({
 
   const activate = () => {
     try {
+      if (activateOverride) {
+        activateOverride();
+        return;
+      }
       if (typeof window === 'undefined') return;
       window.dispatchEvent(new CustomEvent('tv:open-play', { detail: d }));
     } catch (_e) {}
@@ -136,4 +142,3 @@ export function createPosterCard({
   wrapper.appendChild(card);
   return wrapper;
 }
-

@@ -745,6 +745,7 @@ const resetForNewVideo = () => {
   introError.value = '';
   introLoading.value = false;
   introText.value = (props.videoIntro || '').trim();
+  autoPickedEpisodeFromVideoId.value = false;
   detail.value = {
     title: '',
     poster: '',
@@ -778,6 +779,7 @@ const resetForNewSource = () => {
   episodeGroupMoreOpen.value = false;
   introLoading.value = false;
   introError.value = '';
+  autoPickedEpisodeFromVideoId.value = false;
   // Keep intro/meta, but refresh episode list from the new source.
   detail.value = {
     ...detail.value,
@@ -810,6 +812,7 @@ const autoRawListMode = ref(false);
 const activeTab = ref('episodes');
 const episodeDescending = ref(false);
 const selectedEpisodeIndex = ref(0);
+const autoPickedEpisodeFromVideoId = ref(false);
 const playLoading = ref(false);
 const playError = ref('');
 const playerRuntimeError = ref('');
@@ -1250,6 +1253,24 @@ const panOptions = computed(() => parsePlaySources(detail.value.playFrom, detail
 const selectedPanKey = computed(() => {
   return selectedPan.value || panOptions.value[0]?.key || '';
 });
+
+const pickEpisodeByUrlAcrossPans = (targetId) => {
+  const wanted = String(targetId || '').trim();
+  if (!wanted) return null;
+  const list = panOptions.value;
+  for (const pan of list) {
+    const episodes = pan && Array.isArray(pan.episodes) ? pan.episodes : [];
+    for (let i = 0; i < episodes.length; i += 1) {
+      const ep = episodes[i];
+      const url = ep && ep.url != null ? String(ep.url) : '';
+      if (!url) continue;
+      if (url === wanted || url.includes(wanted) || wanted.includes(url)) {
+        return { panKey: pan.key, index: i };
+      }
+    }
+  }
+  return null;
+};
 
 const selectedPanLabel = computed(() => {
   if (introLoading.value) return '加载中...';
@@ -1912,9 +1933,20 @@ const normalizePlayPayload = (data) => {
 };
 
 const pickFirstPlayableUrl = (payload) => {
+  const direct = payload && typeof payload.url === 'string' ? payload.url.trim() : '';
+  if (direct) return direct;
+
   const arr = payload && Array.isArray(payload.url) ? payload.url : [];
-  if (arr.length < 2) return '';
-  return typeof arr[1] === 'string' ? arr[1].trim() : String(arr[1] ?? '').trim();
+  if (arr.length >= 2) {
+    const s0 = typeof arr[0] === 'string' ? arr[0].trim() : '';
+    const s1 = typeof arr[1] === 'string' ? arr[1].trim() : '';
+    if (!/^https?:\/\//i.test(s0) && /^https?:\/\//i.test(s1)) return s1;
+  }
+  for (const v of arr) {
+    const s = typeof v === 'string' ? v.trim() : '';
+    if (s && /^https?:\/\//i.test(s)) return s;
+  }
+  return '';
 };
 
 const rewriteProxyUrlToBase = (urlString, apiBase, tvUser) => {
@@ -1949,12 +1981,21 @@ const rewriteProxyUrlToBase = (urlString, apiBase, tvUser) => {
 
 const rewritePlayPayloadUrls = (payload, apiBase, tvUser) => {
   if (!payload || typeof payload !== 'object') return payload;
+  if (typeof payload.url === 'string') {
+    const u = payload.url;
+    const rewritten = rewriteProxyUrlToBase(u, apiBase, tvUser);
+    if (rewritten && rewritten !== u) return { ...payload, url: rewritten };
+    return payload;
+  }
   if (!Array.isArray(payload.url)) return payload;
+
   const next = { ...payload, url: payload.url.slice() };
-  for (let i = 0; i < next.url.length; i += 2) {
-    const u = next.url[i + 1];
+  for (let i = 0; i < next.url.length; i += 1) {
+    const u = next.url[i];
     if (typeof u !== 'string') continue;
-    next.url[i + 1] = rewriteProxyUrlToBase(u, apiBase, tvUser) || u;
+    if (u.includes(':3006') || u.includes('127.0.0.1') || u.includes('0.0.0.0') || u.toLowerCase().includes('localhost')) {
+      next.url[i] = rewriteProxyUrlToBase(u, apiBase, tvUser) || u;
+    }
   }
   return next;
 };
@@ -2585,6 +2626,18 @@ watch(
     if (introLoading.value) return;
     if (!resumeHistoryLoaded.value) return;
     if (!selectedEpisodes.value.length) return;
+
+    // Folder-like sources (e.g. 网盘目录) often return an episode list for the whole directory.
+    // Ensure the clicked file (props.videoId) becomes the initially selected episode.
+    if (!autoPickedEpisodeFromVideoId.value && !resumeHistory.value) {
+      autoPickedEpisodeFromVideoId.value = true;
+      const picked = pickEpisodeByUrlAcrossPans(props.videoId || '');
+      if (picked && picked.panKey) {
+        selectedPan.value = picked.panKey;
+        selectedEpisodeIndex.value = picked.index;
+        return;
+      }
+    }
 
     // Restore from history once (pan + episode), if available and already loaded.
     if (!resumeHistoryApplied.value && resumeHistoryLoaded.value && resumeHistory.value) {

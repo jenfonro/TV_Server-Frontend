@@ -463,6 +463,7 @@ function setupHomeSpiderBrowse() {
     if (siteBrowseUi && siteBrowseUi.areaRow) siteBrowseUi.areaRow.style.display = '';
     if (siteBrowseUi && siteBrowseUi.secondaryLabelEl) siteBrowseUi.secondaryLabelEl.textContent = '地区';
     if (siteBrowseUi && siteBrowseUi.subtitleEl) siteBrowseUi.subtitleEl.textContent = '来自豆瓣的精选内容';
+    if (siteBrowseUi && siteBrowseUi.endEl) siteBrowseUi.endEl.classList.add('hidden');
     const t = String(type || '').trim();
     window.dispatchEvent(new CustomEvent('tv:douban-browse', { detail: { type: t } }));
   };
@@ -489,11 +490,20 @@ function setupHomeSpiderBrowse() {
       doubanBrowse.insertBefore(sentinel, gridEl.nextSibling);
     }
 
+    let endEl = document.getElementById('siteBrowseEndStatus');
+    if (!endEl && sentinel && sentinel.parentNode && sentinel.parentNode.insertBefore) {
+      endEl = document.createElement('div');
+      endEl.id = 'siteBrowseEndStatus';
+      endEl.className = 'hidden w-full py-8 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400 select-none';
+      sentinel.parentNode.insertBefore(endEl, sentinel);
+    }
+
     return {
       backBtn,
       titleEl,
       subtitleEl,
       statusEl,
+      endEl,
       secondaryLabelEl,
       filterCategoryEl,
       filterAreaEl,
@@ -526,8 +536,24 @@ function setupHomeSpiderBrowse() {
     siteBrowseUi.backBtn.addEventListener('click', (e) => {
       e.preventDefault();
       stopSiteBrowseObserver();
-      if (siteBrowseUi && siteBrowseUi.backBtn) siteBrowseUi.backBtn.classList.add('hidden');
       if (activeSiteApi) {
+        // Folder navigation: if we have a directory stack, go back to previous directory first.
+        const stack = siteBrowseState && Array.isArray(siteBrowseState.stack) ? siteBrowseState.stack.slice() : [];
+        if (stack.length) {
+          const prev = stack.pop() || {};
+          const cid = typeof prev.id === 'string' ? prev.id.trim() : '';
+          if (cid) {
+            void navigateSiteBrowseTo({
+              categoryId: cid,
+              titleOverride: prev.title || '',
+              resetStack: false,
+              stackOverride: stack,
+            });
+            return;
+          }
+        }
+
+        if (siteBrowseUi && siteBrowseUi.backBtn) siteBrowseUi.backBtn.classList.add('hidden');
         showHomeMain();
         if (segToggle) segToggle.classList.remove('hidden');
         doubanBrowse.classList.add('hidden');
@@ -538,6 +564,7 @@ function setupHomeSpiderBrowse() {
         if (continueAllowed) renderContinue();
         return;
       }
+      if (siteBrowseUi && siteBrowseUi.backBtn) siteBrowseUi.backBtn.classList.add('hidden');
       showHomeDouban();
     });
   }
@@ -678,6 +705,13 @@ function setupHomeSpiderBrowse() {
     }
   };
 
+  const setSiteBrowseEndStatus = (text) => {
+    if (!siteBrowseUi || !siteBrowseUi.endEl) return;
+    const t = typeof text === 'string' ? text.trim() : '';
+    siteBrowseUi.endEl.textContent = t;
+    siteBrowseUi.endEl.classList.toggle('hidden', !t);
+  };
+
   const clearSiteBrowseGrid = () => {
     if (!siteBrowseUi) return;
     siteBrowseUi.gridEl.innerHTML = '';
@@ -705,15 +739,20 @@ function setupHomeSpiderBrowse() {
       }
     }
 
-    return (items) => {
+    return (items, opts = {}) => {
       if (!siteBrowseUi) return;
+      const options = opts && typeof opts === 'object' ? opts : {};
+      const onFolder = typeof options.onFolder === 'function' ? options.onFolder : null;
       const list = Array.isArray(items) ? items : [];
       const frag = document.createDocumentFragment();
       list.forEach((it) => {
         const title = it && it.name ? String(it.name) : '';
+        const tag = it && it.tag ? String(it.tag) : '';
+        const isFolder = tag.toLowerCase() === 'folder';
         const wrapper = createPosterCard({
           wrapperClass: 'w-full',
           io,
+          onActivate: isFolder && onFolder ? () => onFolder(it) : null,
           detail: {
             siteKey: activeSiteKey || '',
             spiderApi: activeSiteApi || '',
@@ -726,6 +765,7 @@ function setupHomeSpiderBrowse() {
           poster: it && it.pic ? String(it.pic) : '',
           remark: it && it.remark ? String(it.remark) : '',
           placeholder: false,
+          overlays: !isFolder,
         });
         if (wrapper) frag.appendChild(wrapper);
       });
@@ -744,6 +784,7 @@ function setupHomeSpiderBrowse() {
         pic: it && (it.vod_pic != null ? String(it.vod_pic) : it.pic != null ? String(it.pic) : ''),
         remark:
           it && (it.vod_remarks != null ? String(it.vod_remarks) : it.remark != null ? String(it.remark) : ''),
+        tag: it && (it.vod_tag != null ? String(it.vod_tag) : it.tag != null ? String(it.tag) : ''),
       }))
       .filter((it) => it.name);
   };
@@ -756,12 +797,91 @@ function setupHomeSpiderBrowse() {
     page: 1,
     loading: false,
     ended: false,
+    classes: [],
+    stack: [],
+    seen: new Set(),
   };
   let siteBrowseObserver = null;
 
   const stopSiteBrowseObserver = () => {
     if (siteBrowseObserver && typeof siteBrowseObserver.disconnect === 'function') siteBrowseObserver.disconnect();
     siteBrowseObserver = null;
+  };
+
+  const startSiteBrowseObserver = () => {
+    stopSiteBrowseObserver();
+    if (!siteBrowseUi || !siteBrowseUi.sentinel) return;
+    if (typeof IntersectionObserver === 'undefined') return;
+    try {
+      const localSeq = siteBrowseSeq;
+      siteBrowseObserver = new IntersectionObserver(
+        (entries) => {
+          if (localSeq !== siteBrowseSeq) return;
+          if (!entries || !entries.some((en) => en.isIntersecting)) return;
+          if (siteBrowseState.loading || siteBrowseState.ended) return;
+          loadSiteBrowsePage((siteBrowseState.page || 1) + 1);
+        },
+        { root: null, rootMargin: '300px 0px', threshold: 0.01 }
+      );
+      siteBrowseObserver.observe(siteBrowseUi.sentinel);
+    } catch (_e) {
+      siteBrowseObserver = null;
+    }
+  };
+
+  const navigateSiteBrowseTo = async ({
+    categoryId,
+    titleOverride,
+    resetStack = false,
+    pushStack = false,
+    stackOverride,
+  } = {}) => {
+    if (!siteBrowseUi) return;
+    const cid = typeof categoryId === 'string' ? categoryId.trim() : '';
+    if (!cid) return;
+
+    const prevTitle = siteBrowseUi.titleEl ? String(siteBrowseUi.titleEl.textContent || '') : '';
+    const nextStack = Array.isArray(stackOverride)
+      ? stackOverride.slice()
+      : Array.isArray(siteBrowseState.stack)
+        ? siteBrowseState.stack.slice()
+        : [];
+    if (!Array.isArray(stackOverride)) {
+      if (resetStack) nextStack.length = 0;
+      if (pushStack) {
+        const prevId = typeof siteBrowseState.categoryId === 'string' ? siteBrowseState.categoryId : '';
+        if (prevId) nextStack.push({ id: prevId, title: prevTitle });
+      }
+    }
+
+    siteBrowseSeq += 1;
+    siteBrowseState = {
+      ...siteBrowseState,
+      categoryId: cid,
+      page: 1,
+      loading: false,
+      ended: false,
+      stack: nextStack,
+      seen: new Set(),
+    };
+
+    const classes = Array.isArray(siteBrowseState.classes) ? siteBrowseState.classes : [];
+    const selectedId = classes.some((c) => c && c.id === cid) ? cid : '';
+    buildCategoryChips(classes, selectedId, (nextId) => {
+      const next = typeof nextId === 'string' ? nextId.trim() : '';
+      if (!next || next === siteBrowseState.categoryId) return;
+      void navigateSiteBrowseTo({ categoryId: next, resetStack: true });
+    });
+
+    const nextTitle =
+      (typeof titleOverride === 'string' && titleOverride.trim()) || (classes.find((c) => c && c.id === cid)?.name || '');
+    siteBrowseUi.titleEl.textContent = nextTitle || cid;
+
+    clearSiteBrowseGrid();
+    setSiteBrowseEndStatus('');
+    setSiteBrowseStatus('加载中...');
+    await loadSiteBrowsePage(1);
+    startSiteBrowseObserver();
   };
 
   const loadSiteBrowsePage = async (page) => {
@@ -771,6 +891,7 @@ function setupHomeSpiderBrowse() {
     if (!cid) return;
     if (siteBrowseState.loading || siteBrowseState.ended) return;
     siteBrowseState.loading = true;
+    setSiteBrowseEndStatus('');
     setSiteBrowseStatus(page === 1 ? '加载中...' : '加载更多中...');
     try {
       const resp = await requestSpider('category', siteBrowseState.siteApi, {
@@ -780,24 +901,46 @@ function setupHomeSpiderBrowse() {
         filters: {},
       });
       if (seq !== siteBrowseSeq) return;
+      const seen = siteBrowseState.seen instanceof Set ? siteBrowseState.seen : new Set();
+      siteBrowseState.seen = seen;
       const items = normalizePagedList(resp);
-      if (!items.length) {
+      const fresh = items.filter((it) => {
+        const id = it && it.id ? String(it.id) : '';
+        if (!id) return true;
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+
+      // Some pan spiders ignore `page` and always return the full list.
+      // Stop infinite scroll when no new items are produced for a "next page".
+      if (!fresh.length) {
         siteBrowseState.ended = true;
-        setSiteBrowseStatus('已经是末页');
+        setSiteBrowseStatus('');
+        setSiteBrowseEndStatus('暂无更多');
         return;
       }
-      appendSiteBrowseItems(items);
+      appendSiteBrowseItems(fresh, {
+        onFolder: (it) => {
+          const folderId = it && it.id ? String(it.id) : '';
+          const folderName = it && it.name ? String(it.name) : '';
+          if (!folderId) return;
+          void navigateSiteBrowseTo({ categoryId: folderId, titleOverride: folderName, pushStack: true });
+        },
+      });
       siteBrowseState.page = page;
       setSiteBrowseStatus('');
+      setSiteBrowseEndStatus('');
     } catch (e) {
       if (seq !== siteBrowseSeq) return;
+      setSiteBrowseEndStatus('');
       setSiteBrowseStatus(formatHttpError(e), true);
     } finally {
       if (seq === siteBrowseSeq) siteBrowseState.loading = false;
     }
   };
 
-  const startSiteBrowse = async ({ siteKey, siteApi, categoryId }) => {
+  const startSiteBrowse = async ({ siteKey, siteApi, categoryId, titleOverride } = {}) => {
     if (!siteBrowseUi) return;
     const sk = typeof siteKey === 'string' ? siteKey.trim() : '';
     const sa = typeof siteApi === 'string' ? siteApi.trim() : '';
@@ -815,11 +958,12 @@ function setupHomeSpiderBrowse() {
       buildCategoryChips([], '', () => {});
       clearSiteBrowseGrid();
       setSiteBrowseStatus('无分类数据');
+      setSiteBrowseEndStatus('');
       return;
     }
 
     const exists = classes.some((c) => c.id === cid);
-    const realCid = exists ? cid : classes[0].id;
+    const realCid = cid;
 
     siteBrowseSeq += 1;
     siteBrowseState = {
@@ -829,70 +973,28 @@ function setupHomeSpiderBrowse() {
       page: 1,
       loading: false,
       ended: false,
+      classes,
+      stack: [],
+      seen: new Set(),
     };
 
     showSiteCategoryBrowse();
-    siteBrowseUi.titleEl.textContent = classes.find((c) => c.id === realCid)?.name || '';
+    const overrideTitle = typeof titleOverride === 'string' ? titleOverride.trim() : '';
+    siteBrowseUi.titleEl.textContent = overrideTitle || classes.find((c) => c.id === realCid)?.name || realCid;
     siteBrowseUi.subtitleEl.textContent = getSiteDisplayName(sk) || sk;
 
-    buildCategoryChips(classes, realCid, (nextId) => {
+    buildCategoryChips(classes, exists ? realCid : '', (nextId) => {
       const next = typeof nextId === 'string' ? nextId.trim() : '';
       if (!next || next === siteBrowseState.categoryId) return;
-      stopSiteBrowseObserver();
-      siteBrowseSeq += 1;
-      siteBrowseState = {
-        ...siteBrowseState,
-        categoryId: next,
-        page: 1,
-        loading: false,
-        ended: false,
-      };
-      siteBrowseUi.titleEl.textContent = classes.find((c) => c.id === next)?.name || '';
-      clearSiteBrowseGrid();
-      setSiteBrowseStatus('加载中...');
-      loadSiteBrowsePage(1);
-      stopSiteBrowseObserver();
-      if (siteBrowseUi.sentinel && typeof IntersectionObserver !== 'undefined') {
-        try {
-          const localSeq = siteBrowseSeq;
-          siteBrowseObserver = new IntersectionObserver(
-            (entries) => {
-              if (localSeq !== siteBrowseSeq) return;
-              if (!entries || !entries.some((en) => en.isIntersecting)) return;
-              if (siteBrowseState.loading || siteBrowseState.ended) return;
-              loadSiteBrowsePage((siteBrowseState.page || 1) + 1);
-            },
-            { root: null, rootMargin: '300px 0px', threshold: 0.01 }
-          );
-          siteBrowseObserver.observe(siteBrowseUi.sentinel);
-        } catch (_e) {
-          siteBrowseObserver = null;
-        }
-      }
+      void navigateSiteBrowseTo({ categoryId: next, resetStack: true });
     });
 
     clearSiteBrowseGrid();
+    setSiteBrowseEndStatus('');
     setSiteBrowseStatus('加载中...');
     await loadSiteBrowsePage(1);
 
-    stopSiteBrowseObserver();
-    if (siteBrowseUi.sentinel && typeof IntersectionObserver !== 'undefined') {
-      try {
-        const localSeq = siteBrowseSeq;
-        siteBrowseObserver = new IntersectionObserver(
-          (entries) => {
-            if (localSeq !== siteBrowseSeq) return;
-            if (!entries || !entries.some((en) => en.isIntersecting)) return;
-            if (siteBrowseState.loading || siteBrowseState.ended) return;
-            loadSiteBrowsePage((siteBrowseState.page || 1) + 1);
-          },
-          { root: null, rootMargin: '300px 0px', threshold: 0.01 }
-        );
-        siteBrowseObserver.observe(siteBrowseUi.sentinel);
-      } catch (_e) {
-        siteBrowseObserver = null;
-      }
-    }
+    startSiteBrowseObserver();
   };
 
   const clearSiteActive = () => {
@@ -1270,15 +1372,16 @@ function setupHomeSpiderBrowse() {
         name: it && (it.vod_name != null ? String(it.vod_name) : it.name != null ? String(it.name) : ''),
         pic: it && (it.vod_pic != null ? String(it.vod_pic) : it.pic != null ? String(it.pic) : ''),
         remark: it && (it.vod_remarks != null ? String(it.vod_remarks) : it.remark != null ? String(it.remark) : ''),
+        tag: it && (it.vod_tag != null ? String(it.vod_tag) : it.tag != null ? String(it.tag) : ''),
       }))
       .filter((it) => it.name);
   };
 
   const ensureRowIo = createLazyImageIo();
 
-  const renderRowItems = (rowEl, items) => {
-    rowEl.innerHTML = '';
-    const list = Array.isArray(items) ? items : [];
+	  const renderRowItems = (rowEl, items) => {
+	    rowEl.innerHTML = '';
+	    const list = Array.isArray(items) ? items : [];
     if (!list.length) {
       const div = document.createElement('div');
       div.className = 'px-4 sm:px-6 text-sm text-gray-500 dark:text-gray-400';
@@ -1288,29 +1391,41 @@ function setupHomeSpiderBrowse() {
     }
     const io = ensureRowIo();
 
-    const frag = document.createDocumentFragment();
-    list.forEach((it) => {
-      const title = it && it.name ? String(it.name) : '';
-      const wrapper = createPosterCard({
-        wrapperClass: 'min-w-[96px] w-24 sm:min-w-[180px] sm:w-44',
-        io,
-        detail: {
-          siteKey: activeSiteKey || '',
-          spiderApi: activeSiteApi || '',
-          videoId: it && it.id ? String(it.id) : '',
+	    const frag = document.createDocumentFragment();
+	    list.forEach((it) => {
+	      const title = it && it.name ? String(it.name) : '';
+	      const tag = it && it.tag ? String(it.tag) : '';
+	      const isFolder = tag.toLowerCase() === 'folder';
+	      const wrapper = createPosterCard({
+	        wrapperClass: 'min-w-[96px] w-24 sm:min-w-[180px] sm:w-44',
+	        io,
+	        onActivate:
+	          isFolder
+	            ? () => {
+	                const folderId = it && it.id ? String(it.id) : '';
+	                const folderName = it && it.name ? String(it.name) : '';
+	                if (!folderId || !activeSiteApi) return;
+	                void startSiteBrowse({ siteKey: activeSiteKey || '', siteApi: activeSiteApi, categoryId: folderId, titleOverride: folderName });
+	              }
+	            : null,
+	        detail: {
+	          siteKey: activeSiteKey || '',
+	          spiderApi: activeSiteApi || '',
+	          videoId: it && it.id ? String(it.id) : '',
           videoTitle: title,
           videoPoster: it && it.pic ? String(it.pic) : '',
           videoRemark: it && it.remark ? String(it.remark) : '',
         },
-        title,
-        poster: it && it.pic ? String(it.pic) : '',
-        remark: it && it.remark ? String(it.remark) : '',
-        placeholder: true,
-      });
-      if (wrapper) frag.appendChild(wrapper);
-    });
-    rowEl.appendChild(frag);
-  };
+	        title,
+	        poster: it && it.pic ? String(it.pic) : '',
+	        remark: it && it.remark ? String(it.remark) : '',
+	        placeholder: true,
+	        overlays: !isFolder,
+	      });
+	      if (wrapper) frag.appendChild(wrapper);
+	    });
+	    rowEl.appendChild(frag);
+	  };
 
   const buildCategorySection = (category) => {
     const section = document.createElement('section');
