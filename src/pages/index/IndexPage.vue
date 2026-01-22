@@ -493,6 +493,8 @@ const appVersion =
 
 const LAST_SITE_KEY = 'tv_server_last_site_key';
 const LAST_SITE_NAME_KEY = 'tv_server_last_site_name';
+const LAST_VISITED_SITE_KEY = 'tv_server_last_visited_site_key';
+const LAST_VISITED_SITE_NAME_KEY = 'tv_server_last_visited_site_name';
 const HOME_VIEW_KEY = 'tv_server_home_view';
 
 	const isPlayView = ref(false);
@@ -521,7 +523,7 @@ function dispatchHomeView(view) {
   window.dispatchEvent(new CustomEvent('tv:home-view', { detail: { view } }));
 }
 
-function switchHome() {
+function switchGlobalHome() {
   try {
     localStorage.setItem(LAST_SITE_KEY, 'home');
     localStorage.setItem(HOME_VIEW_KEY, 'home');
@@ -529,6 +531,65 @@ function switchHome() {
   isPlayView.value = false;
   mobileActiveTab.value = 'home';
   dispatchHomeView('home');
+}
+
+function trySelectSite(siteKey) {
+  const key = typeof siteKey === 'string' ? siteKey.trim() : '';
+  if (!key) return false;
+  try {
+    const safeKey =
+      typeof CSS !== 'undefined' && CSS && typeof CSS.escape === 'function'
+        ? CSS.escape(key)
+        : key.replace(/"/g, '\\"');
+    const el = document.querySelector(`#tvSidebarDrawer a[data-site-key="${safeKey}"][data-site-api]`);
+    if (!el || typeof el.click !== 'function') return false;
+    el.click();
+    return true;
+  } catch (_e) {
+    return false;
+  }
+}
+
+function switchHome() {
+  let lastKey = '';
+  try {
+    lastKey = (localStorage.getItem(LAST_VISITED_SITE_KEY) || '').trim();
+    if (!lastKey) lastKey = (localStorage.getItem(LAST_SITE_KEY) || '').trim();
+  } catch (_e) {
+    lastKey = '';
+  }
+
+  if (lastKey && lastKey !== 'home') {
+    isPlayView.value = false;
+    mobileActiveTab.value = '';
+    if (trySelectSite(lastKey)) return;
+
+    // If sites list isn't ready yet, wait for AppSidebar to refresh.
+    try {
+      let done = false;
+      const onUpdated = () => {
+        if (done) return;
+        if (trySelectSite(lastKey)) {
+          done = true;
+          window.removeEventListener('tv:sidebar-sites-updated', onUpdated);
+        }
+      };
+      window.addEventListener('tv:sidebar-sites-updated', onUpdated);
+      setTimeout(() => {
+        if (done) return;
+        try {
+          window.removeEventListener('tv:sidebar-sites-updated', onUpdated);
+        } catch (_e2) {}
+        switchGlobalHome();
+      }, 1200);
+      return;
+    } catch (_e) {
+      switchGlobalHome();
+      return;
+    }
+  }
+
+  switchGlobalHome();
 }
 
 function switchDouban(type) {

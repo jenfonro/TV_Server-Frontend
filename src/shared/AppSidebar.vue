@@ -539,6 +539,8 @@ const props = defineProps({
 const LAST_SITE_KEY = 'tv_server_last_site_key';
 const HOME_VIEW_KEY = 'tv_server_home_view';
 const LAST_SITE_NAME_KEY = 'tv_server_last_site_name';
+const LAST_VISITED_SITE_KEY = 'tv_server_last_visited_site_key';
+const LAST_VISITED_SITE_NAME_KEY = 'tv_server_last_visited_site_name';
 
 const homeViewState = ref('home'); // 'home' | 'search' | 'douban:*'
 const activeSiteKeyState = ref('');
@@ -653,8 +655,12 @@ const rememberSite = (input) => {
         ? (typeof input.name === 'string' ? input.name.trim() : '')
         : '';
     localStorage.setItem(LAST_SITE_KEY, k);
+    localStorage.setItem(LAST_VISITED_SITE_KEY, k);
     localStorage.setItem(HOME_VIEW_KEY, 'home');
-    if (n) localStorage.setItem(LAST_SITE_NAME_KEY, n);
+    if (n) {
+      localStorage.setItem(LAST_SITE_NAME_KEY, n);
+      localStorage.setItem(LAST_VISITED_SITE_NAME_KEY, n);
+    }
     activeSiteKeyState.value = k;
     homeViewState.value = 'home';
   } catch (_e) {}

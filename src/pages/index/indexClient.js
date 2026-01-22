@@ -1025,6 +1025,8 @@ function setupHomeSpiderBrowse() {
   } catch (_e) {}
 
   const LAST_SITE_KEY = 'tv_server_last_site_key';
+  const LAST_VISITED_SITE_KEY = 'tv_server_last_visited_site_key';
+  const LAST_VISITED_SITE_NAME_KEY = 'tv_server_last_visited_site_name';
   const HOME_VIEW_KEY = 'tv_server_home_view';
   const SITE_CLASS_CACHE_PREFIX = 'tv_server_site_classes_';
 
@@ -1034,15 +1036,99 @@ function setupHomeSpiderBrowse() {
 
   const SITE_HOME_CACHE_MAX = 2;
   const siteHomeCache = new Map();
+  const SITE_HOME_SESSION_PREFIX = 'tv_server_site_home_cache_';
+  const SITE_HOME_SESSION_KEYS = 'tv_server_site_home_cache_keys';
+  const revalidatedSiteHomeKeys = new Set();
 
-  const getCachedSiteHome = (siteKey) => {
+  const shouldRevalidateSessionCachedSiteHomeOnce = (siteKey) => {
+    const key = typeof siteKey === 'string' ? siteKey.trim() : '';
+    if (!key) return false;
+    if (revalidatedSiteHomeKeys.has(key)) return false;
+    revalidatedSiteHomeKeys.add(key);
+    return true;
+  };
+
+  const readSessionHomeKeys = () => {
+    try {
+      const raw = sessionStorage.getItem(SITE_HOME_SESSION_KEYS) || '';
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : [];
+      return list.map((k) => (typeof k === 'string' ? k.trim() : '')).filter((k) => k);
+    } catch (_e) {
+      return [];
+    }
+  };
+
+  const writeSessionHomeKeys = (keys) => {
+    try {
+      const list = Array.isArray(keys) ? keys : [];
+      sessionStorage.setItem(SITE_HOME_SESSION_KEYS, JSON.stringify(list));
+    } catch (_e) {}
+  };
+
+  const touchSessionHomeKey = (siteKey) => {
+    const key = typeof siteKey === 'string' ? siteKey.trim() : '';
+    if (!key) return;
+    const keys = readSessionHomeKeys().filter((k) => k !== key);
+    keys.push(key);
+    while (keys.length > SITE_HOME_CACHE_MAX) {
+      const oldest = keys.shift();
+      if (!oldest) continue;
+      try {
+        sessionStorage.removeItem(`${SITE_HOME_SESSION_PREFIX}${oldest}`);
+      } catch (_e) {}
+    }
+    writeSessionHomeKeys(keys);
+  };
+
+  const readSessionCachedSiteHome = (siteKey) => {
+    const key = typeof siteKey === 'string' ? siteKey.trim() : '';
+    if (!key) return null;
+    try {
+      const raw = sessionStorage.getItem(`${SITE_HOME_SESSION_PREFIX}${key}`) || '';
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      const api = typeof parsed.api === 'string' ? parsed.api : '';
+      const classes = Array.isArray(parsed.classes) ? parsed.classes : [];
+      const normalized = classes
+        .map((c) => ({
+          id: c && typeof c.id === 'string' ? c.id : '',
+          name: c && typeof c.name === 'string' ? c.name : '',
+          items: c && Array.isArray(c.items) ? c.items : [],
+        }))
+        .filter((c) => c.id && c.name);
+      if (!api) return null;
+      touchSessionHomeKey(key);
+      return { api, classes: normalized };
+    } catch (_e) {
+      return null;
+    }
+  };
+
+  const writeSessionCachedSiteHome = (siteKey, value) => {
+    const key = typeof siteKey === 'string' ? siteKey.trim() : '';
+    if (!key || !value) return;
+    try {
+      sessionStorage.setItem(`${SITE_HOME_SESSION_PREFIX}${key}`, JSON.stringify(value));
+      touchSessionHomeKey(key);
+    } catch (_e) {}
+  };
+
+  const getCachedSiteHomeEntry = (siteKey) => {
     const key = typeof siteKey === 'string' ? siteKey.trim() : '';
     if (!key) return null;
     const hit = siteHomeCache.get(key);
-    if (!hit) return null;
-    siteHomeCache.delete(key);
-    siteHomeCache.set(key, hit);
-    return hit;
+    if (hit) {
+      siteHomeCache.delete(key);
+      siteHomeCache.set(key, hit);
+      return { value: hit, source: 'memory' };
+    }
+    const persisted = readSessionCachedSiteHome(key);
+    if (!persisted) return null;
+    putCachedSiteHome(key, persisted);
+    return { value: persisted, source: 'session' };
   };
 
   const putCachedSiteHome = (siteKey, value) => {
@@ -1055,6 +1141,7 @@ function setupHomeSpiderBrowse() {
       if (oldest) siteHomeCache.delete(oldest);
       else break;
     }
+    writeSessionCachedSiteHome(key, value);
   };
 
   const tvUser = (cfgEl.getAttribute('data-tv-user') || '').trim();
@@ -1311,25 +1398,33 @@ function setupHomeSpiderBrowse() {
   const loadHome = async (api, siteKey) => {
     const seq = (loadSeq += 1);
     activeSiteApi = api;
-    siteSections.innerHTML = '';
     siteSections.classList.remove('hidden');
     doubanSections.classList.add('hidden');
     doubanBrowse.classList.add('hidden');
 
     const cacheKey = typeof siteKey === 'string' ? siteKey.trim() : activeSiteKey;
-    const cached = getCachedSiteHome(cacheKey);
+    const cacheEntry = getCachedSiteHomeEntry(cacheKey);
+    const cached = cacheEntry ? cacheEntry.value : null;
+    let renderedFromCache = false;
     if (cached && cached.api === api) {
       try {
+        siteSections.innerHTML = '';
         renderSiteHomeFromCache(cached);
+        renderedFromCache = true;
       } catch (_e) {}
-      return;
+      // sessionStorage 命中：刷新页面后仍会请求一次最新数据；内存命中：同一页面内不重复请求
+      if (!cacheEntry || cacheEntry.source !== 'session') return;
+      if (!shouldRevalidateSessionCachedSiteHomeOnce(cacheKey)) return;
     }
 
     try {
-      const pageLoading = document.createElement('div');
-      pageLoading.className = 'px-4 text-sm text-gray-500 dark:text-gray-400';
-      pageLoading.textContent = '加载中...';
-      siteSections.appendChild(pageLoading);
+      if (!renderedFromCache) {
+        siteSections.innerHTML = '';
+        const pageLoading = document.createElement('div');
+        pageLoading.className = 'px-4 text-sm text-gray-500 dark:text-gray-400';
+        pageLoading.textContent = '加载中...';
+        siteSections.appendChild(pageLoading);
+      }
 
       const data = await requestSpider('home', activeSiteApi, {});
       if (seq !== loadSeq) return;
@@ -1458,14 +1553,21 @@ function setupHomeSpiderBrowse() {
     if (continueAllowed) renderContinue();
     loadHome(api, key);
 
+    let siteName = '';
     try {
       const labelEl = a.querySelector('.nav-label');
-      const name = labelEl ? (labelEl.textContent || '').trim() : (a.textContent || '').trim();
-      emitMobileContext('site', name);
-    } catch (_e) {}
+      siteName = labelEl ? (labelEl.textContent || '').trim() : (a.textContent || '').trim();
+      emitMobileContext('site', siteName);
+    } catch (_e) {
+      siteName = '';
+    }
 
     try {
-      if (key) localStorage.setItem(LAST_SITE_KEY, key);
+      if (key) {
+        localStorage.setItem(LAST_SITE_KEY, key);
+        localStorage.setItem(LAST_VISITED_SITE_KEY, key);
+        if (siteName) localStorage.setItem(LAST_VISITED_SITE_NAME_KEY, siteName);
+      }
     } catch (_e) {}
   });
 
