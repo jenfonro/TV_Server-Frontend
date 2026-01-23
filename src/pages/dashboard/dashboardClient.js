@@ -1617,8 +1617,10 @@ export function initDashboardPage(bootstrap = {}) {
   const videoSourceHeaderAvailability = document.getElementById('videoSourceHeaderAvailability');
   const videoSourceHeaderStatus = document.getElementById('videoSourceHeaderStatus');
   const videoSourceHeaderHome = document.getElementById('videoSourceHeaderHome');
+  const videoSourceHeaderSearch = document.getElementById('videoSourceHeaderSearch');
   const videoSourceHeaderCover = document.getElementById('videoSourceHeaderCover');
   const videoSourceHeaderSort = document.getElementById('videoSourceHeaderSort');
+  const videoSourceHeaderError = document.getElementById('videoSourceHeaderError');
   const videoSourceHeaderCheckbox = document.getElementById('videoSourceHeaderCheckbox');
   const videoSourceBulkCheckDisable = document.getElementById('videoSourceBulkCheckDisable');
 
@@ -1737,11 +1739,17 @@ export function initDashboardPage(bootstrap = {}) {
 	    if (videoSourceHeaderHome) {
 	      setFixedHeaderCell(videoSourceHeaderHome, 72);
 	    }
+	    if (videoSourceHeaderSearch) {
+	      setFixedHeaderCell(videoSourceHeaderSearch, 72);
+	    }
 	    if (videoSourceHeaderCover) {
 	      setFixedHeaderCell(videoSourceHeaderCover, 96);
 	    }
 	    if (videoSourceHeaderSort) {
 	      setFixedHeaderCell(videoSourceHeaderSort, 72);
+	    }
+	    if (videoSourceHeaderError) {
+	      setEllipsisCell(videoSourceHeaderError, { ...fixedCell(260) });
 	    }
 	    if (videoSourceHeaderAvailability) {
 	      setFixedHeaderCell(videoSourceHeaderAvailability, 96);
@@ -1753,6 +1761,7 @@ export function initDashboardPage(bootstrap = {}) {
       const key = (site && site.key) || '';
 	      const enabled = site && site.enabled !== false;
 	      const homeShown = site && site.home !== false;
+	      const searchEnabled = site && site.search !== false;
 	      const coverShown = !!(key && videoSourceCoverSite === key);
 
       const selectBox = document.createElement('input');
@@ -1808,6 +1817,17 @@ export function initDashboardPage(bootstrap = {}) {
 	      setCenterCell(homeCell, fixedCell(72));
 	      homeCell.appendChild(homeSwitchLabel);
 
+      const { label: searchSwitchLabel } = createSwitchLabel({
+        checked: !!searchEnabled,
+        title: searchEnabled ? '搜索启用' : '搜索禁用',
+        ariaLabel: searchEnabled ? '搜索启用' : '搜索禁用',
+        inputAttrs: { 'data-search-key': key },
+      });
+
+      const searchCell = document.createElement('span');
+      setCenterCell(searchCell, fixedCell(72));
+      searchCell.appendChild(searchSwitchLabel);
+
 	      const { label: coverSwitchLabel } = createSwitchLabel({
 	        checked: coverShown,
 	        disabled: videoSourceCoverSaving,
@@ -1820,27 +1840,42 @@ export function initDashboardPage(bootstrap = {}) {
 	      setCenterCell(coverCell, fixedCell(96));
 	      coverCell.appendChild(coverSwitchLabel);
 
-	      const sortCell = document.createElement('span');
-	      setCenterCell(sortCell, fixedCell(72));
-	      appendSortButtons(sortCell, {
-	        dirAttr: 'data-sort',
+      const sortCell = document.createElement('span');
+      setCenterCell(sortCell, fixedCell(72));
+      appendSortButtons(sortCell, {
+        dirAttr: 'data-sort',
         keyAttr: 'data-site-key',
         key,
         disabledUp: idx === 0,
         disabledDown: idx === currentVideoSourceSites.length - 1,
       });
 
+      const errorCell = document.createElement('span');
+      errorCell.className = `${CLS.mutedXs} truncate`;
+      const rawError =
+        site && typeof site.error === 'string'
+          ? site.error
+          : site && typeof site.errorMessage === 'string'
+            ? site.errorMessage
+            : site && typeof site.err === 'string'
+              ? site.err
+              : '';
+      errorCell.textContent = rawError || '';
+      setEllipsisCell(errorCell, { ...fixedCell(260) });
+
       li.appendChild(selectBox);
       li.appendChild(name);
-	      li.appendChild(keyEl);
-	      li.appendChild(availabilityCell);
-	      li.appendChild(enableCell);
-	      li.appendChild(homeCell);
-	      li.appendChild(coverCell);
-	      li.appendChild(sortCell);
-	      videoSourceList.appendChild(li);
-	    });
-	  }
+      li.appendChild(keyEl);
+      li.appendChild(availabilityCell);
+      li.appendChild(enableCell);
+      li.appendChild(homeCell);
+      li.appendChild(searchCell);
+      li.appendChild(coverCell);
+      li.appendChild(sortCell);
+      li.appendChild(errorCell);
+      videoSourceList.appendChild(li);
+    });
+  }
 
   if (videoSourceList) {
     renderVideoSourceList([]);
@@ -1863,6 +1898,15 @@ export function initDashboardPage(bootstrap = {}) {
       home: home ? '1' : '0',
     });
     if (resp.ok && data && data.success) return { ok: true, home: !!data.home };
+    return { ok: false, message: (data && data.message) || '保存失败' };
+  };
+
+  const updateVideoSourceSiteSearch = async (key, search) => {
+    const { resp, data } = await postForm('/dashboard/video/source/sites/search', {
+      key,
+      search: search ? '1' : '0',
+    });
+    if (resp.ok && data && data.success) return { ok: true, search: !!data.search };
     return { ok: false, message: (data && data.message) || '保存失败' };
   };
 
@@ -1940,8 +1984,9 @@ export function initDashboardPage(bootstrap = {}) {
       try {
         const spiderName = extractSpiderNameFromApi(site.api);
         if (spiderName === 'baseset') {
-          const ok = await fetchCatPawOpenStatus({ apiBase: normalizedBase, path: 'website' });
-          results[key] = ok ? 'valid' : 'invalid';
+          // `baseset` is the CatPawOpen settings site; treat it as always available.
+          // Do not probe CatPawOpen here to avoid disabling a non-content source.
+          results[key] = 'valid';
           continue;
         }
         const spiderPath = String(site.api || '').trim().replace(/\/+$/, '').replace(/^\//, '');
@@ -2191,6 +2236,18 @@ export function initDashboardPage(bootstrap = {}) {
 	        updateSite: (site, result) => ({ ...site, home: !!result.home }),
 	      });
 	    });
+
+    videoSourceList.addEventListener('change', async (e) => {
+      const target = e.target;
+      if (!target || !target.matches) return;
+      if (!target.matches('input[type="checkbox"][data-search-key]')) return;
+      await saveVideoSourceCheckbox({
+        target,
+        keyAttr: 'data-search-key',
+        save: updateVideoSourceSiteSearch,
+        updateSite: (site, result) => ({ ...site, search: !!result.search }),
+      });
+    });
 
 	    videoSourceList.addEventListener('change', async (e) => {
 	      const target = e.target;
@@ -2619,7 +2676,31 @@ export function initDashboardPage(bootstrap = {}) {
 	        if (d2 && typeof d2.coverSite === 'string') {
 	          videoSourceCoverSite = String(d2.coverSite || '').trim();
 	        }
-	        renderVideoSourceList(d2.sites);
+	        // `baseset` is a settings site; mark as "valid" on import so the UI doesn't show "未检测".
+	        try {
+	          const basesetKeys = (d2.sites || [])
+	            .filter((s) => s && typeof s.key === 'string' && typeof s.api === 'string' && /^\/spider\/baseset(?:\/|$)/.test(s.api))
+	            .map((s) => s.key)
+	            .filter(Boolean);
+	          if (basesetKeys.length) {
+	            const results = {};
+	            basesetKeys.forEach((k) => {
+	              results[k] = 'valid';
+	            });
+	            const { resp: r3, data: d3 } = await postForm('/dashboard/video/source/sites/check', {
+	              results: JSON.stringify(results),
+	            });
+	            if (r3.ok && d3 && d3.success && Array.isArray(d3.sites)) {
+	              renderVideoSourceList(d3.sites);
+	            } else {
+	              renderVideoSourceList(d2.sites);
+	            }
+	          } else {
+	            renderVideoSourceList(d2.sites);
+	          }
+	        } catch (_e) {
+	          renderVideoSourceList(d2.sites);
+	        }
 	        setVideoSourceSaveStatus('success', '导入成功');
 	        clearStatusLater(setVideoSourceSaveStatus, 1200);
 	        return;

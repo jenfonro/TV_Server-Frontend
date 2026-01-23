@@ -267,6 +267,10 @@
 		                    class="text-sm font-medium text-gray-600 dark:text-gray-300"
 		                  >首页显示</span>
 		                  <span
+		                    id="videoSourceHeaderSearch"
+		                    class="text-sm font-medium text-gray-600 dark:text-gray-300"
+		                  >搜索启用</span>
+		                  <span
 		                    id="videoSourceHeaderCover"
 		                    class="text-sm font-medium text-gray-600 dark:text-gray-300"
 		                  >聚合图片显示</span>
@@ -274,6 +278,10 @@
 		                    id="videoSourceHeaderSort"
 		                    class="text-sm font-medium text-gray-600 dark:text-gray-300"
 		                  >排序</span>
+		                  <span
+		                    id="videoSourceHeaderError"
+		                    class="text-sm font-medium text-gray-600 dark:text-gray-300 truncate"
+		                  >错误信息</span>
 	                  <div id="videoSourceBulkActions" class="hidden flex items-center gap-2 ml-2">
 	                    <button
 	                      id="videoSourceBulkCheckDisable"

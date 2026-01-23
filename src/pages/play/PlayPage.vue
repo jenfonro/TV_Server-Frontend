@@ -622,7 +622,7 @@ const fetchAggregatedSourcesExactMatches = async () => {
     const data = await fetchUserSitesCached();
     if (seqAtCall !== sourcesSearchState.seq) return;
     const sites = Array.isArray(data && data.sites) ? data.sites : [];
-    const enabledSites = sites.filter((s) => s && s.enabled !== false && s.api && !isConfigCenterSite(s));
+    const enabledSites = sites.filter((s) => s && s.enabled !== false && s.search !== false && s.api && !isConfigCenterSite(s));
 
     const apiBase = resolveCatApiBaseForPlay();
     const tvUser = props.bootstrap?.user?.username || '';

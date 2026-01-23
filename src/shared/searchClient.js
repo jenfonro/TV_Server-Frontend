@@ -342,7 +342,7 @@ export function initSearchPage() {
       const key = s && typeof s.key === 'string' ? s.key : '';
       return api.includes('/spider/baseset/') || key.toLowerCase().includes('baseset');
     };
-    const sites = (await loadSites()).filter((s) => s && s.enabled !== false && s.api && !isConfigCenter(s));
+    const sites = (await loadSites()).filter((s) => s && s.enabled !== false && s.search !== false && s.api && !isConfigCenter(s));
     if (runId !== currentRunId) return;
     if (!sites.length) {
       setStatus('暂无可用站点');
