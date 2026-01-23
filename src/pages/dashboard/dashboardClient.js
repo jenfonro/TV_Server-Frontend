@@ -203,6 +203,44 @@ export function initDashboardPage(bootstrap = {}) {
     return { maxLen, width: `${maxLen}ch`, maxWidth: `${maxLen + safePad}ch` };
   };
 
+  const calcPxCell = (items, getText, { minPx = 0, maxPx = 0, className = '', padPx = 12 } = {}) => {
+    const list = Array.isArray(items) ? items : [];
+    const getter = typeof getText === 'function' ? getText : () => '';
+    const min = Number.isFinite(Number(minPx)) ? Math.max(0, Number(minPx)) : 0;
+    const max = Number.isFinite(Number(maxPx)) && Number(maxPx) > 0 ? Number(maxPx) : 0;
+    const pad = Number.isFinite(Number(padPx)) ? Math.max(0, Number(padPx)) : 0;
+
+    if (!list.length) {
+      const w = min;
+      return { px: w, width: `${w}px`, minWidth: `${min}px`, maxWidth: `${w}px`, flex: `0 0 ${w}px` };
+    }
+
+    const measure = createEl('span', { className });
+    setStyles(measure, {
+      position: 'absolute',
+      visibility: 'hidden',
+      whiteSpace: 'nowrap',
+      left: '-99999px',
+      top: '-99999px',
+      pointerEvents: 'none',
+    });
+    document.body.appendChild(measure);
+
+    let maxWidthPx = 0;
+    list.forEach((it) => {
+      const text = getter(it);
+      measure.textContent = text != null ? String(text) : '';
+      maxWidthPx = Math.max(maxWidthPx, Math.ceil(measure.getBoundingClientRect().width));
+    });
+
+    document.body.removeChild(measure);
+
+    let w = Math.max(maxWidthPx, min);
+    if (max > 0) w = Math.min(w, max);
+    w = Math.ceil(w);
+    return { px: w, width: `${w}px`, minWidth: `${min}px`, maxWidth: `${w}px`, flex: `0 0 ${w}px` };
+  };
+
   const fixedCell = (px) => {
     const n = Number(px);
     const v = Number.isFinite(n) ? Math.max(0, n) : 0;
@@ -1666,20 +1704,31 @@ export function initDashboardPage(bootstrap = {}) {
 	      appendEmptyItem(videoSourceList);
 	      return;
 	    }
-    const nameCh = calcChCell(currentVideoSourceSites, (site) => (site && (site.name || site.key)) || '');
-    const apiCh = calcChCell(currentVideoSourceSites, (site) => formatVideoSourceApi(site && site.api));
+    // Use pixel-based width so header + rows align even if font-size differs.
+    const nameCell = calcPxCell(
+      currentVideoSourceSites,
+      (site) => (site && (site.name || site.key)) || '',
+      { minPx: 80, maxPx: 420, className: 'text-sm font-medium' }
+    );
+    const apiCell = calcPxCell(
+      currentVideoSourceSites,
+      (site) => formatVideoSourceApi(site && site.api),
+      { minPx: 90, maxPx: 360, className: 'text-xs' }
+    );
     if (videoSourceHeaderName) {
       setEllipsisCell(videoSourceHeaderName, {
-        width: nameCh.width,
+        width: nameCell.width,
         minWidth: '80px',
-        maxWidth: nameCh.maxWidth,
+        maxWidth: nameCell.maxWidth,
+        flex: nameCell.flex,
       });
     }
     if (videoSourceHeaderApi) {
       setEllipsisCell(videoSourceHeaderApi, {
-        width: apiCh.width,
+        width: apiCell.width,
         minWidth: '90px',
-        maxWidth: apiCh.maxWidth,
+        maxWidth: apiCell.maxWidth,
+        flex: apiCell.flex,
       });
     }
     if (videoSourceHeaderStatus) {
@@ -1717,18 +1766,20 @@ export function initDashboardPage(bootstrap = {}) {
       name.className = 'text-sm font-medium text-gray-800 dark:text-gray-100 truncate';
       name.textContent = (site && (site.name || site.key)) || '';
       setEllipsisCell(name, {
-        width: nameCh.width,
+        width: nameCell.width,
         minWidth: '80px',
-        maxWidth: nameCh.maxWidth,
+        maxWidth: nameCell.maxWidth,
+        flex: nameCell.flex,
       });
 
       const keyEl = document.createElement('span');
       keyEl.className = `${CLS.mutedXs} truncate`;
       keyEl.textContent = formatVideoSourceApi(site && site.api) || '';
       setEllipsisCell(keyEl, {
-        width: apiCh.width,
+        width: apiCell.width,
         minWidth: '90px',
-        maxWidth: apiCh.maxWidth,
+        maxWidth: apiCell.maxWidth,
+        flex: apiCell.flex,
       });
 
       const availabilityCell = document.createElement('span');
