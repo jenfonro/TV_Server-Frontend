@@ -714,6 +714,7 @@ const syncMobileContextFromStorage = () => {
     videoIntro: typeof d.videoIntro === 'string' ? d.videoIntro : '',
     videoPoster: typeof d.videoPoster === 'string' ? d.videoPoster : '',
     videoRemark: typeof d.videoRemark === 'string' ? d.videoRemark : '',
+    videoPanDir: typeof d.videoPanDir === 'string' ? d.videoPanDir : '',
 	  };
 	  playKey.value += 1;
 	  isPlayView.value = true;

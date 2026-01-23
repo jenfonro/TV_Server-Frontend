@@ -255,6 +255,7 @@ function setupHomeSpiderBrowse() {
       const videoId = it && typeof it.videoId === 'string' ? it.videoId : '';
       const videoTitle = it && typeof it.videoTitle === 'string' ? it.videoTitle : '';
       if (!siteKey || !spiderApi || !videoId || !videoTitle) return;
+      const videoPanDir = it && typeof it.videoPanDir === 'string' ? it.videoPanDir : '';
       const wrapper = createPosterCard({
         wrapperClass: 'min-w-[96px] w-24 sm:min-w-[180px] sm:w-44',
         io,
@@ -265,6 +266,7 @@ function setupHomeSpiderBrowse() {
           videoTitle,
           videoPoster: it && typeof it.videoPoster === 'string' ? it.videoPoster : '',
           videoRemark: it && typeof it.videoRemark === 'string' ? it.videoRemark : '',
+          videoPanDir,
         },
         title: videoTitle,
         poster: it && typeof it.videoPoster === 'string' ? it.videoPoster : '',
@@ -744,11 +746,29 @@ function setupHomeSpiderBrowse() {
       const options = opts && typeof opts === 'object' ? opts : {};
       const onFolder = typeof options.onFolder === 'function' ? options.onFolder : null;
       const list = Array.isArray(items) ? items : [];
+
+      const computePanDir = () => {
+        const stack = siteBrowseState && Array.isArray(siteBrowseState.stack) ? siteBrowseState.stack : [];
+        const cid = siteBrowseState && typeof siteBrowseState.categoryId === 'string' ? siteBrowseState.categoryId.trim() : '';
+        const curTitle = siteBrowseUi && siteBrowseUi.titleEl ? String(siteBrowseUi.titleEl.textContent || '').trim() : '';
+        const parts = [];
+        stack.forEach((s) => {
+          const id = s && typeof s.id === 'string' ? s.id.trim() : '';
+          const title = s && typeof s.title === 'string' ? s.title.trim() : '';
+          if (!title) return;
+          if (id === '0' || title === '0') return;
+          parts.push(title.replace(/\/+/g, ' ').trim());
+        });
+        if (cid && cid !== '0' && curTitle && curTitle !== '0') parts.push(curTitle.replace(/\/+/g, ' ').trim());
+        return parts.filter(Boolean).join('/');
+      };
+
       const frag = document.createDocumentFragment();
       list.forEach((it) => {
         const title = it && it.name ? String(it.name) : '';
         const tag = it && it.tag ? String(it.tag) : '';
         const isFolder = tag.toLowerCase() === 'folder';
+        const panDir = !isFolder ? computePanDir() : '';
         const wrapper = createPosterCard({
           wrapperClass: 'w-full',
           io,
@@ -760,6 +780,7 @@ function setupHomeSpiderBrowse() {
             videoTitle: title,
             videoPoster: it && it.pic ? String(it.pic) : '',
             videoRemark: it && it.remark ? String(it.remark) : '',
+            videoPanDir: panDir,
           },
           title,
           poster: it && it.pic ? String(it.pic) : '',

@@ -496,6 +496,7 @@ const props = defineProps({
   videoIntro: { type: String, default: '' },
   videoPoster: { type: String, default: '' },
   videoRemark: { type: String, default: '' },
+  videoPanDir: { type: String, default: '' },
 });
 
 const drPlayerRef = ref(null);
@@ -2096,6 +2097,20 @@ const normalizeOpenListMountPath = (value) => {
   return p;
 };
 
+const normalizeOpenListFileName = (value) => {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return '';
+  let s = raw;
+  // Strip leading size prefix like: [1.11 GB]xxx.mp4 / 【1.11GB】xxx.mp4 / (1.11 GB) xxx.mp4
+  s = s.replace(
+    /^\s*[\[\(【（]\s*\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB|PB|KIB|MIB|GIB|TIB|PIB)\s*[\]\)】）]\s*/i,
+    ''
+  );
+  // Some scripts use "1.11 GB - xxx.mp4"
+  s = s.replace(/^\s*\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB|PB|KIB|MIB|GIB|TIB|PIB)\s*-\s*/i, '');
+  return s.trim().replace(/^\/+|\/+$/g, '');
+};
+
 const isQuarkPanLabel = (label) => {
   const s = typeof label === 'string' ? label : '';
   if (!s) return false;
@@ -2324,9 +2339,14 @@ const requestPlay = async () => {
     const url = ep && typeof ep.url === 'string' ? ep.url : '';
     if (url) {
       const rawNames = extractRawNamesFromEpisodeUrl(url);
-      if (rawNames && rawNames[0]) return String(rawNames[0] || '').trim();
+      if (rawNames && rawNames[0]) return normalizeOpenListFileName(String(rawNames[0] || '').trim());
     }
-    return epNameAtCall ? String(epNameAtCall).trim() : '';
+    return epNameAtCall ? normalizeOpenListFileName(String(epNameAtCall).trim()) : '';
+  })();
+  const openListDirAtCall = (() => {
+    const raw = props.videoPanDir ? String(props.videoPanDir || '').trim() : '';
+    if (!raw) return '';
+    return raw.replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');
   })();
 
   playRequestState.seq += 1;
@@ -2372,61 +2392,45 @@ const requestPlay = async () => {
           return { raw, payload, url, rawHeaders, proxyHintFromPayload };
         };
 
-        let playResult = await fetchPlay(shouldQuarkTv ? { quark_tv: '1' } : undefined);
-		    if (!playResult.url) {
-          if (seqAtCall === playRequestState.seq) playError.value = '无可用播放地址';
-		      return;
-		    }
-
-      const goProxyEnabled = !!props.bootstrap?.settings?.goProxyEnabled;
-      const proxyHint = goProxyEnabled || playResult.proxyHintFromPayload;
-      let finalUrl = playResult.url;
-      let finalHeaders = playResult.rawHeaders;
-      let disableGoProxy = false;
+        let playResult = null;
+        let finalUrl = '';
+        let finalHeaders = {};
+        let disableGoProxy = false;
 
         if (shouldQuarkTv) {
-		          const openListApiBase = String(props.bootstrap?.settings?.openListApiBase || '');
-		          const openListToken = String(props.bootstrap?.settings?.openListToken || '');
-		          const openListMount = String(props.bootstrap?.settings?.openListQuarkTvMount || '');
-		          const userDir = `TV_Server_${sanitizeTvUsername(tvUser)}`;
-		          const mount = normalizeOpenListMountPath(openListMount);
-		          const nameRaw = typeof openListFileNameAtCall === 'string' ? openListFileNameAtCall.trim() : '';
-		          const name = nameRaw.replace(/^\/+|\/+$/g, '');
-		          const refreshPath = `${mount}${userDir}/${name}`.replace(/\/{2,}/g, '/').replace(/\/+$/g, '');
+          const openListApiBase = String(props.bootstrap?.settings?.openListApiBase || '');
+          const openListToken = String(props.bootstrap?.settings?.openListToken || '');
+          const openListMount = String(props.bootstrap?.settings?.openListQuarkTvMount || '');
+          const mount = normalizeOpenListMountPath(openListMount);
+          const dir = openListDirAtCall;
+          const nameRaw = typeof openListFileNameAtCall === 'string' ? openListFileNameAtCall.trim() : '';
+          const name = nameRaw.replace(/^\/+|\/+$/g, '');
+          const refreshPath = `${mount}${dir ? `${dir}/` : ''}${name}`.replace(/\/{2,}/g, '/').replace(/\/+$/g, '');
 
-		          let rawUrlFromOpenList = '';
-		          try {
-		            rawUrlFromOpenList = await withRetries(3, async () => {
-		              return await openListRefreshPath({ apiBase: openListApiBase, token: openListToken, path: refreshPath });
-		            });
-		          } catch (_e) {
-		            rawUrlFromOpenList = '';
-		          }
-
-		          let quarkTvFallbackPlay = null;
-		          if (!rawUrlFromOpenList) {
-		            try {
-		              quarkTvFallbackPlay = await fetchPlay({ quark_tv: '0' });
-		            } catch (_e) {}
-		          }
-
-		          if (rawUrlFromOpenList) {
-		            finalUrl = rawUrlFromOpenList;
-		            finalHeaders = {};
-		            disableGoProxy = true;
-		          } else if (quarkTvFallbackPlay && quarkTvFallbackPlay.url) {
-		            finalUrl = quarkTvFallbackPlay.url;
-		            finalHeaders = quarkTvFallbackPlay.rawHeaders || {};
-		          } else {
-		            try {
-		              playResult = await fetchPlay(undefined);
-		              if (playResult && playResult.url) {
-		                finalUrl = playResult.url;
-		                finalHeaders = playResult.rawHeaders || {};
-		              }
-		            } catch (__e) {}
-		          }
+          try {
+            const rawUrlFromOpenList = await withRetries(3, async () => {
+              return await openListRefreshPath({ apiBase: openListApiBase, token: openListToken, path: refreshPath });
+            });
+            if (rawUrlFromOpenList) {
+              finalUrl = rawUrlFromOpenList;
+              finalHeaders = {};
+              disableGoProxy = true;
+            }
+          } catch (_e) {}
         }
+
+        if (!finalUrl) {
+          playResult = await fetchPlay(shouldQuarkTv ? { quark_tv: '0' } : undefined);
+          if (!playResult.url) {
+            if (seqAtCall === playRequestState.seq) playError.value = '无可用播放地址';
+            return;
+          }
+          finalUrl = playResult.url;
+          finalHeaders = playResult.rawHeaders || {};
+        }
+
+        const goProxyEnabled = !!props.bootstrap?.settings?.goProxyEnabled;
+        const proxyHint = goProxyEnabled || !!(playResult && playResult.proxyHintFromPayload);
 
       try {
         const preferredPan = guessPreferredPanFromLabel(src && src.label ? String(src.label) : '');
@@ -2461,6 +2465,7 @@ const requestPlay = async () => {
 		          videoPoster: historyCoverPoster.value || pickHistoryPoster() || '',
 		          videoRemark: (props.videoRemark || '').trim(),
 		          panLabel: (src && src.label ? String(src.label) : '').trim(),
+		          videoPanDir: (props.videoPanDir || '').trim(),
 		          playFlag: flag,
 		          episodeIndex: idxAtCall >= 0 ? idxAtCall : 0,
 		          episodeName: epNameAtCall,
