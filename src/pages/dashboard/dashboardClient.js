@@ -526,10 +526,6 @@ export function initDashboardPage(bootstrap = {}) {
       if (proxyInput && settingsResp && settingsResp.settings && typeof settingsResp.settings.proxy === 'string') {
         proxyInput.value = settingsResp.settings.proxy || '';
       }
-      const directLinkInput = document.getElementById('catPawOpenDirectLinkEnabled');
-      if (directLinkInput && settingsResp && settingsResp.settings) {
-        directLinkInput.checked = !!settingsResp.settings.directLinkEnabled;
-      }
       const panBuiltinInput = document.getElementById('catPawOpenPanBuiltinResolverEnabled');
       if (panBuiltinInput && settingsResp && settingsResp.settings) {
         panBuiltinInput.checked = !!settingsResp.settings.panBuiltinResolverEnabled;
@@ -547,8 +543,6 @@ export function initDashboardPage(bootstrap = {}) {
     if (!normalizedBase) return { ok: false, skipped: true, reason: 'unconfigured' };
     const proxyInput = document.querySelector('#catPawOpenSettingsForm input[name="catPawOpenProxy"]');
     const proxy = proxyInput && typeof proxyInput.value === 'string' ? proxyInput.value : '';
-    const directLinkInput = document.getElementById('catPawOpenDirectLinkEnabled');
-    const directLinkEnabled = !!(directLinkInput && directLinkInput.checked);
     const panBuiltinInput = document.getElementById('catPawOpenPanBuiltinResolverEnabled');
     const panBuiltinResolverEnabled = !!(panBuiltinInput && panBuiltinInput.checked);
     const parts = [];
@@ -557,12 +551,11 @@ export function initDashboardPage(bootstrap = {}) {
         apiBase: normalizedBase,
         path: 'admin/settings',
         method: 'PUT',
-        body: { proxy: String(proxy || ''), directLinkEnabled, panBuiltinResolverEnabled },
+        body: { proxy: String(proxy || ''), panBuiltinResolverEnabled },
       });
       if (proxyInput && resp && resp.settings && typeof resp.settings.proxy === 'string') {
         proxyInput.value = resp.settings.proxy || '';
       }
-      if (directLinkInput && resp && resp.settings) directLinkInput.checked = !!resp.settings.directLinkEnabled;
       if (panBuiltinInput && resp && resp.settings) panBuiltinInput.checked = !!resp.settings.panBuiltinResolverEnabled;
       return { ok: true, parts: [], data: resp };
     } catch (err) {

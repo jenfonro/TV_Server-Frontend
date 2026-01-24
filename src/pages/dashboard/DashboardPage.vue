@@ -397,30 +397,20 @@
 		                >
 			                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">保存后将同步到 CatPawOpen 并立即生效（留空关闭）。</p>
 			              </div>
-			              <div class="space-y-1 pt-1">
-			                <div class="text-sm font-medium text-gray-700 dark:text-gray-200">使用内置网盘解析</div>
-			                <div>
-			                  <label class="enable-switch" title="使用内置网盘解析">
-			                    <input id="catPawOpenPanBuiltinResolverEnabled" name="catPawOpenPanBuiltinResolverEnabled" type="checkbox" />
-			                    <span class="enable-slider"></span>
-			                  </label>
-			                </div>
-			              </div>
-			              <div class="space-y-1 pt-1">
-			                <div class="text-sm font-medium text-gray-700 dark:text-gray-200">直链模式</div>
-			                <div>
-			                  <label class="enable-switch" title="直链模式">
-			                    <input id="catPawOpenDirectLinkEnabled" name="catPawOpenDirectLinkEnabled" type="checkbox" />
-			                    <span class="enable-slider"></span>
-			                  </label>
-			                </div>
-			                <div class="text-xs text-gray-500 dark:text-gray-400">开启后 CatPawOpen 始终返回直链。</div>
-			              </div>
-			              <div class="tv-us-acc-item">
-			                <button id="catPawOpenPansToggle" class="tv-us-acc-head" type="button">
-			                  <span>网盘列表</span>
-			                  <span id="catPawOpenPansToggleIcon" class="tv-us-acc-icon" data-open="false">
-			                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+				              <div class="space-y-1 pt-1">
+				                <div class="text-sm font-medium text-gray-700 dark:text-gray-200">使用内置网盘解析</div>
+				                <div>
+				                  <label class="enable-switch" title="使用内置网盘解析">
+				                    <input id="catPawOpenPanBuiltinResolverEnabled" name="catPawOpenPanBuiltinResolverEnabled" type="checkbox" />
+				                    <span class="enable-slider"></span>
+				                  </label>
+				                </div>
+				              </div>
+				              <div class="tv-us-acc-item">
+				                <button id="catPawOpenPansToggle" class="tv-us-acc-head" type="button">
+				                  <span>网盘列表</span>
+				                  <span id="catPawOpenPansToggleIcon" class="tv-us-acc-icon" data-open="false">
+				                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
 			                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6" />
 			                    </svg>
 			                  </span>
