@@ -973,21 +973,6 @@ export function initDashboardPage(bootstrap = {}) {
     return { ok: false, message: (data && data.message) || '保存失败', settings: (data && data.settings) || null };
   };
 
-  const syncPanSettingToCatPawOpen = async (path, body) => {
-    const apiBase = await resolveCatPawOpenApiBase();
-    const normalizedBase = normalizeCatPawOpenAdminBase(apiBase);
-    if (!normalizedBase) return { ok: false, skipped: true, reason: 'unconfigured' };
-    const resp = await requestCatPawOpenAdminJson({
-      apiBase: normalizedBase,
-      path,
-      method: 'PUT',
-      body: body != null ? body : {},
-    });
-    // Website APIs may return HTTP 200 with { code: -1, message }, so we must validate `code`.
-    unwrapCatPawOpenWebsiteData(resp);
-    return { ok: true, skipped: false };
-  };
-
   const syncAllPanLoginSettingsToCatPawOpen = async () => {
     const apiBase = await resolveCatPawOpenApiBase();
     const normalizedBase = normalizeCatPawOpenAdminBase(apiBase);
@@ -1011,11 +996,12 @@ export function initDashboardPage(bootstrap = {}) {
       const val = entries[i][1] && typeof entries[i][1] === 'object' ? entries[i][1] : {};
       if (!key) continue;
 
+      if (!typeByKey.has(key)) continue;
       const t = typeByKey.get(key) || 'cookie';
       if (t === 'account') {
         const username = typeof val.username === 'string' ? val.username : '';
         const password = typeof val.password === 'string' ? val.password : '';
-        if (!username && !password) continue;
+        if (!username || !password) continue;
         try {
           // eslint-disable-next-line no-await-in-loop
           const resp = await requestCatPawOpenAdminJson({
@@ -1052,34 +1038,7 @@ export function initDashboardPage(bootstrap = {}) {
     return { ok: failCount <= 0, skipped: false, okCount, failCount };
   };
 
-  const syncPansListToCatPawOpen = async () => {
-    const apiBase = await resolveCatPawOpenApiBase();
-    const normalizedBase = normalizeCatPawOpenAdminBase(apiBase);
-    if (!normalizedBase) return { ok: false, skipped: true, reason: 'unconfigured' };
-
-    try {
-      const { resp: r, data } = await fetchJsonSafe('/dashboard/video/pans/list', { method: 'GET' }, {});
-      if (!(r && r.ok && data && data.success && Array.isArray(data.pans))) return { ok: true, skipped: false };
-      const list = normalizePans(data.pans);
-      const putResp = await requestCatPawOpenAdminJson({
-        apiBase: normalizedBase,
-        path: 'website/pans/list',
-        method: 'PUT',
-        body: { list },
-      });
-      unwrapCatPawOpenWebsiteData(putResp);
-      return { ok: true, skipped: false };
-    } catch (_e) {
-      return { ok: false, skipped: false };
-    }
-  };
-
-  const syncPanBackupToCatPawOpenOnBaseChange = async () => {
-    const [pans, settings] = await Promise.all([syncPansListToCatPawOpen(), syncAllPanLoginSettingsToCatPawOpen()]);
-    return { ok: !!((pans && pans.ok !== false) && (settings && settings.ok !== false)), pans, settings };
-  };
-
-  const savePanAndSync = async ({ key, save, syncPath, syncBody }) => {
+  const savePanLoginSettingToServer = async ({ key, save }) => {
     setPanSettingsStatus('', '保存中...');
     const result = await (typeof save === 'function' ? save() : null);
 
@@ -1088,17 +1047,7 @@ export function initDashboardPage(bootstrap = {}) {
 
     if (result && result.ok) {
       setPanSettingsStatus('success', '保存成功');
-      try {
-        const resp = await syncPanSettingToCatPawOpen(syncPath, syncBody);
-        if (resp && resp.ok === false && resp.reason === 'unconfigured') {
-          setPanSettingsStatus('error', 'CatPawOpen 接口地址未设置');
-          return;
-        }
-        setPanSettingsStatus('success', '保存成功');
-        setTimeout(() => setPanSettingsStatus('', ''), 1200);
-      } catch (_err) {
-        setPanSettingsStatus('error', 'CatPawOpen 接口异常');
-      }
+      setTimeout(() => setPanSettingsStatus('', ''), 1200);
     } else {
       setPanSettingsStatus('error', (result && result.message) || '保存失败');
     }
@@ -1381,11 +1330,9 @@ export function initDashboardPage(bootstrap = {}) {
       if (action === 'save-cookie') {
         const textarea = panSettingsContent.querySelector(`textarea[data-pan-cookie-input="${key}"]`);
         const value = textarea ? textarea.value : '';
-        await savePanAndSync({
+        await savePanLoginSettingToServer({
           key,
           save: () => savePanCookie(key, value),
-          syncPath: `website/${encodeURIComponent(key)}/cookie`,
-          syncBody: { cookie: value != null ? String(value) : '' },
         });
         return;
       }
@@ -1395,11 +1342,9 @@ export function initDashboardPage(bootstrap = {}) {
         const passwordEl = panSettingsContent.querySelector(`input[data-pan-account-password="${key}"]`);
         const username = usernameEl ? usernameEl.value : '';
         const password = passwordEl ? passwordEl.value : '';
-        await savePanAndSync({
+        await savePanLoginSettingToServer({
           key,
           save: () => savePanAccount(key, username, password),
-          syncPath: `website/${encodeURIComponent(key)}/account`,
-          syncBody: { username: username != null ? String(username) : '', password: password != null ? String(password) : '' },
         });
         return;
       }
@@ -2657,6 +2602,46 @@ export function initDashboardPage(bootstrap = {}) {
       syncDisplay();
     }
 
+    const syncPanLoginBtn = document.getElementById('catPawOpenSyncPanLoginSettingsBtn');
+    const syncPanLoginStatus = document.getElementById('catPawOpenSyncPanLoginSettingsStatus');
+    const setSyncPanLoginStatus = bindInlineStatus(syncPanLoginStatus);
+    bindOnce(syncPanLoginBtn, () => {
+      syncPanLoginBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        await withDatasetLock(syncPanLoginBtn, 'pending', async () => {
+          setSyncPanLoginStatus('', '同步中...');
+          try {
+            const sync = await syncAllPanLoginSettingsToCatPawOpen();
+            if (sync && sync.ok === false && sync.skipped === true && sync.reason === 'unconfigured') {
+              setSyncPanLoginStatus('error', 'CatPawOpen 接口地址未设置');
+              return;
+            }
+
+            const okCount = sync && typeof sync.okCount === 'number' ? sync.okCount : 0;
+            const failCount = sync && typeof sync.failCount === 'number' ? sync.failCount : 0;
+
+            if (sync && sync.ok === false) {
+              setSyncPanLoginStatus('error', `同步完成：成功 ${okCount}，失败 ${failCount}`);
+              return;
+            }
+            if (!okCount && !failCount) {
+              setSyncPanLoginStatus('success', '无可同步账号');
+              setTimeout(() => setSyncPanLoginStatus('', ''), 1200);
+              return;
+            }
+            if (failCount > 0) {
+              setSyncPanLoginStatus('error', `同步完成：成功 ${okCount}，失败 ${failCount}`);
+              return;
+            }
+            setSyncPanLoginStatus('success', `同步完成：成功 ${okCount}`);
+            setTimeout(() => setSyncPanLoginStatus('', ''), 1200);
+          } catch (_err) {
+            setSyncPanLoginStatus('error', '同步失败');
+          }
+        });
+      });
+    });
+
     catPawOpenForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       await withDatasetLock(catPawOpenForm, 'pending', async () => {
@@ -2675,17 +2660,6 @@ export function initDashboardPage(bootstrap = {}) {
             await refreshCatPawOpenRemoteSettings(apiBase);
             setCatPawOpenSaveStatus('success', '保存成功');
             return;
-          }
-
-          if (data && data.apiBaseChanged === true) {
-            try {
-              const sync = await syncPanBackupToCatPawOpenOnBaseChange();
-              if (sync && sync.ok === false) {
-                setCatPawOpenSaveStatus('error', 'CatPawOpen 同步失败');
-              }
-            } catch (_e) {
-              setCatPawOpenSaveStatus('error', 'CatPawOpen 同步失败');
-            }
           }
 
           const remoteSettingsEl = document.getElementById('catPawOpenRemoteSettings');

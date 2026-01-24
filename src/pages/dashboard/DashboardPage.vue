@@ -406,6 +406,13 @@
 				                  </label>
 				                </div>
 				              </div>
+				              <div class="pt-1 flex items-center gap-3">
+				                <button id="catPawOpenSyncPanLoginSettingsBtn" type="button" class="btn-green">同步网盘账号至catpawopen</button>
+				                <div
+				                  id="catPawOpenSyncPanLoginSettingsStatus"
+				                  class="text-xs hidden whitespace-nowrap text-gray-500 dark:text-gray-400"
+				                ></div>
+				              </div>
 				              <div class="tv-us-acc-item">
 				                <button id="catPawOpenPansToggle" class="tv-us-acc-head" type="button">
 				                  <span>网盘列表</span>
