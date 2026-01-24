@@ -255,7 +255,6 @@ function setupHomeSpiderBrowse() {
       const videoId = it && typeof it.videoId === 'string' ? it.videoId : '';
       const videoTitle = it && typeof it.videoTitle === 'string' ? it.videoTitle : '';
       if (!siteKey || !spiderApi || !videoId || !videoTitle) return;
-      const videoPanDir = it && typeof it.videoPanDir === 'string' ? it.videoPanDir : '';
       const wrapper = createPosterCard({
         wrapperClass: 'min-w-[96px] w-24 sm:min-w-[180px] sm:w-44',
         io,
@@ -266,7 +265,6 @@ function setupHomeSpiderBrowse() {
           videoTitle,
           videoPoster: it && typeof it.videoPoster === 'string' ? it.videoPoster : '',
           videoRemark: it && typeof it.videoRemark === 'string' ? it.videoRemark : '',
-          videoPanDir,
         },
         title: videoTitle,
         poster: it && typeof it.videoPoster === 'string' ? it.videoPoster : '',

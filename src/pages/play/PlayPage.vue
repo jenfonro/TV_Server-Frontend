@@ -2354,20 +2354,20 @@ const requestPlay = async () => {
     }
     return epNameAtCall ? normalizeOpenListFileName(String(epNameAtCall).trim()) : '';
   })();
-  const openListDirAtCall = (() => {
-    const raw = props.videoPanDir ? String(props.videoPanDir || '').trim() : '';
-    const fromHistory = raw ? raw.replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/') : '';
-    const tvUser = props.bootstrap?.user?.username || '';
-    const fallback = getDefaultQuarkTvUserDir(tvUser);
+	  const openListDirAtCall = (() => {
+	    const raw = props.videoPanDir ? String(props.videoPanDir || '').trim() : '';
+	    const fromPayload = raw ? raw.replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/') : '';
+	    const tvUser = props.bootstrap?.user?.username || '';
+	    const fallback = getDefaultQuarkTvUserDir(tvUser);
 
-    // Only netdisk ("我的|网盘") items should carry a real directory stack.
-    // For normal sites, always use the per-user Quark TV folder to avoid polluting history with category breadcrumbs.
-    if (isWodePanVideoId(props.videoId)) return fromHistory;
+	    // Only netdisk ("我的|网盘") items should carry a real directory stack.
+	    // For normal sites, always use the per-user Quark TV folder to avoid polluting history with category breadcrumbs.
+	    if (isWodePanVideoId(props.videoId)) return fromPayload;
 
-    if (!fromHistory) return fallback;
-    if (fromHistory === fallback || fromHistory.startsWith(`${fallback}/`)) return fromHistory;
-    return fallback;
-  })();
+	    if (!fromPayload) return fallback;
+	    if (fromPayload === fallback || fromPayload.startsWith(`${fallback}/`)) return fromPayload;
+	    return fallback;
+	  })();
 
   playRequestState.seq += 1;
   const seqAtCall = playRequestState.seq;
@@ -2480,27 +2480,27 @@ const requestPlay = async () => {
 		    playingPanKey.value = panKeyAtCall;
 		    playingEpisodeIndex.value = idxAtCall;
 
-			    try {
-			      const siteKey = (props.siteKey || '').trim();
-			      const spiderApi = (api || '').trim();
-			      const videoId = (props.videoId || '').trim();
-		      const videoTitle = displayTitle.value || '';
-		      if (siteKey && spiderApi && videoId && videoTitle) {
-		        const payloadForHistory = {
-		          siteKey,
-		          siteName: resolvedSiteName.value || '',
-		          spiderApi,
-		          videoId,
-		          videoTitle,
-		          videoPoster: historyCoverPoster.value || pickHistoryPoster() || '',
-		          videoRemark: (props.videoRemark || '').trim(),
-		          panLabel: (src && src.label ? String(src.label) : '').trim(),
-		          videoPanDir: (openListDirAtCall || '').trim(),
-		          playFlag: flag,
-		          episodeIndex: idxAtCall >= 0 ? idxAtCall : 0,
-		          episodeName: epNameAtCall,
-		        };
-		        lastHistoryPayload.value = payloadForHistory;
+				    try {
+				      const siteKey = (props.siteKey || '').trim();
+				      const spiderApi = (api || '').trim();
+				      const videoId = (props.videoId || '').trim();
+			      const videoTitle = displayTitle.value || '';
+			      const isNetDisk = isWodePanVideoId(videoId);
+			      if (!isNetDisk && siteKey && spiderApi && videoId && videoTitle) {
+			        const payloadForHistory = {
+			          siteKey,
+			          siteName: resolvedSiteName.value || '',
+			          spiderApi,
+			          videoId,
+			          videoTitle,
+			          videoPoster: historyCoverPoster.value || pickHistoryPoster() || '',
+			          videoRemark: (props.videoRemark || '').trim(),
+			          panLabel: (src && src.label ? String(src.label) : '').trim(),
+			          playFlag: flag,
+			          episodeIndex: idxAtCall >= 0 ? idxAtCall : 0,
+			          episodeName: epNameAtCall,
+			        };
+			        lastHistoryPayload.value = payloadForHistory;
 		        await apiPostJson('/api/playhistory', { ...payloadForHistory }, { dedupe: false });
 			        window.dispatchEvent(new CustomEvent('tv:play-history-updated'));
 			      }
@@ -2674,27 +2674,27 @@ watch(
       }
     }
 
-    // Restore from history once (pan + episode), if available and already loaded.
-    if (!resumeHistoryApplied.value && resumeHistoryLoaded.value && resumeHistory.value) {
-      const prevPan = selectedPan.value;
-      const prevIdx = selectedEpisodeIndex.value;
-      const wantedPanLabel = typeof resumeHistory.value.panLabel === 'string' ? resumeHistory.value.panLabel.trim() : '';
-      const wantedIdxRaw = resumeHistory.value.episodeIndex != null ? Number(resumeHistory.value.episodeIndex) : 0;
-      const wantedIdx = Number.isFinite(wantedIdxRaw) && wantedIdxRaw >= 0 ? Math.floor(wantedIdxRaw) : 0;
-      const wantedEpName = typeof resumeHistory.value.episodeName === 'string' ? resumeHistory.value.episodeName.trim() : '';
-      const normalize = (label) => String(label || '').trim().replace(/#\d{1,3}\s*$/i, '').trim().toLowerCase();
+	    // Restore from history once (pan + episode), if available and already loaded.
+	    if (!resumeHistoryApplied.value && resumeHistoryLoaded.value && resumeHistory.value) {
+	      const prevPan = selectedPan.value;
+	      const prevIdx = selectedEpisodeIndex.value;
+	      const wantedPanLabel = typeof resumeHistory.value.panLabel === 'string' ? resumeHistory.value.panLabel.trim() : '';
+	      const wantedIdxRaw = resumeHistory.value.episodeIndex != null ? Number(resumeHistory.value.episodeIndex) : 0;
+	      const wantedIdx = Number.isFinite(wantedIdxRaw) && wantedIdxRaw >= 0 ? Math.floor(wantedIdxRaw) : 0;
+	      const wantedEpName = typeof resumeHistory.value.episodeName === 'string' ? resumeHistory.value.episodeName.trim() : '';
+	      const normalize = (label) => String(label || '').trim().replace(/#\d{1,3}\s*$/i, '').trim().toLowerCase();
 
-      let target = null;
-      if (wantedPanLabel) {
-        const want = normalize(wantedPanLabel);
-        target = panOptions.value.find((o) => o && normalize(o.label) === want) || null;
-        if (target && target.key) selectedPan.value = target.key;
-      }
+	      let target = null;
+	      if (wantedPanLabel) {
+	        const want = normalize(wantedPanLabel);
+	        target = panOptions.value.find((o) => o && normalize(o.label) === want) || null;
+	        if (target && target.key) selectedPan.value = target.key;
+	      }
 
-      const rules = compiledMagicEpisodeRules.value;
-      const cleanRules = compiledMagicEpisodeCleanRegexRules.value;
-      const exactIdx = wantedEpName ? pickExactResumeEpisodeIndexFromName(wantedEpName, cleanRules) : null;
-      if (exactIdx != null) {
+	      const rules = compiledMagicEpisodeRules.value;
+	      const cleanRules = compiledMagicEpisodeCleanRegexRules.value;
+	      const exactIdx = wantedEpName ? pickExactResumeEpisodeIndexFromName(wantedEpName, cleanRules) : null;
+	      if (exactIdx != null) {
         selectedEpisodeIndex.value = exactIdx;
       } else {
         let wanted = { season: 0, episode: 0 };
@@ -2709,11 +2709,11 @@ watch(
           wantedEpisode: wanted.episode,
           wantedIndex: wantedIdx,
         });
-      }
+	      }
 
-      resumeHistoryApplied.value = true;
-      if (prevPan !== selectedPan.value || prevIdx !== selectedEpisodeIndex.value) return;
-    }
+	      resumeHistoryApplied.value = true;
+	      if (prevPan !== selectedPan.value || prevIdx !== selectedEpisodeIndex.value) return;
+	    }
 
     if (selectedEpisodeIndex.value < 0) selectedEpisodeIndex.value = 0;
     initialAutoPlayTriggered.value = true;
