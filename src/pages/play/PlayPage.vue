@@ -2059,7 +2059,8 @@ const guessPreferredPanFromLabel = (label) => {
   const raw = typeof label === 'string' ? label.trim() : '';
   if (!raw) return '';
   if (raw.includes('百度')) return 'baidu';
-  if (raw.includes('夸克') || raw.toLowerCase().includes('quark')) return 'quark';
+  const lower = raw.toLowerCase();
+  if (raw.includes('夸克') || raw.includes('夸父') || lower.includes('quark') || lower.includes('kuafu')) return 'quark';
   return '';
 };
 
@@ -2126,7 +2127,9 @@ const isQuarkPanLabel = (label) => {
   const s = typeof label === 'string' ? label : '';
   if (!s) return false;
   if (s.includes('夸克')) return true;
-  return s.toLowerCase().includes('quark');
+  if (s.includes('夸父')) return true;
+  const lower = s.toLowerCase();
+  return lower.includes('quark') || lower.includes('kuafu');
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2392,8 +2395,7 @@ const requestPlay = async () => {
           isQuarkPanLabel(src && src.label ? String(src.label) : '') &&
           !!props.bootstrap?.settings?.openListApiBase &&
           !!props.bootstrap?.settings?.openListToken &&
-          !!props.bootstrap?.settings?.openListQuarkTvMount &&
-          !!openListFileNameAtCall;
+          !!props.bootstrap?.settings?.openListQuarkTvMount;
 
         const fetchPlay = async (query) => {
           const raw = await requestCatSpider({
@@ -2416,39 +2418,41 @@ const requestPlay = async () => {
         let finalHeaders = {};
         let disableGoProxy = false;
 
-	        if (shouldQuarkTv) {
-	          const openListApiBase = String(props.bootstrap?.settings?.openListApiBase || '');
-	          const openListToken = String(props.bootstrap?.settings?.openListToken || '');
-	          const openListMount = String(props.bootstrap?.settings?.openListQuarkTvMount || '');
-	          const mount = normalizeOpenListMountPath(openListMount);
-	          const dir = openListDirAtCall;
-	          const nameRaw = typeof openListFileNameAtCall === 'string' ? openListFileNameAtCall.trim() : '';
-	          const name = nameRaw.replace(/^\/+|\/+$/g, '');
-	          const refreshPath = `${mount}${dir ? `${dir}/` : ''}${name}`.replace(/\/{2,}/g, '/').replace(/\/+$/g, '');
+		        if (shouldQuarkTv) {
+		          const openListApiBase = String(props.bootstrap?.settings?.openListApiBase || '');
+		          const openListToken = String(props.bootstrap?.settings?.openListToken || '');
+		          const openListMount = String(props.bootstrap?.settings?.openListQuarkTvMount || '');
+		          const mount = normalizeOpenListMountPath(openListMount);
+		          const dir = openListDirAtCall;
+		          const nameRaw = typeof openListFileNameAtCall === 'string' ? openListFileNameAtCall.trim() : '';
+		          const name = nameRaw.replace(/^\/+|\/+$/g, '');
 
-	          // In Quark TV mode, CatPawOpen expects the first request to be `play?quark_tv=1`
-	          // to perform its side-effects (e.g. preparing OpenList entries). Then we refresh OpenList.
-	          try {
-	            await fetchPlay({ quark_tv: '1' });
-	          } catch (e) {
+		          // In Quark TV mode, CatPawOpen expects the first request to be `play?quark_tv=1`
+		          // to perform its side-effects (e.g. preparing OpenList entries). Then we refresh OpenList.
+		          try {
+		            await fetchPlay({ quark_tv: '1' });
+		          } catch (e) {
 	            // Best-effort: even if `play?quark_tv=1` fails, still try OpenList refresh and then fall back.
 	            console.warn(
 	              '[QuarkTV] play(quark_tv=1) failed:',
 	              e && e.message ? String(e.message) : e
 	            );
-	          }
+		          }
 
-	          try {
-	            const rawUrlFromOpenList = await withRetries(3, async () => {
-	              return await openListRefreshPath({ apiBase: openListApiBase, token: openListToken, path: refreshPath });
-	            });
-	            if (rawUrlFromOpenList) {
-              finalUrl = rawUrlFromOpenList;
-              finalHeaders = {};
-              disableGoProxy = true;
-            }
-          } catch (_e) {}
-        }
+		          if (name) {
+		            const refreshPath = `${mount}${dir ? `${dir}/` : ''}${name}`.replace(/\/{2,}/g, '/').replace(/\/+$/g, '');
+		            try {
+		              const rawUrlFromOpenList = await withRetries(3, async () => {
+		                return await openListRefreshPath({ apiBase: openListApiBase, token: openListToken, path: refreshPath });
+		              });
+		              if (rawUrlFromOpenList) {
+		                finalUrl = rawUrlFromOpenList;
+		                finalHeaders = {};
+		                disableGoProxy = true;
+		              }
+		            } catch (_e) {}
+		          }
+	        }
 
         if (!finalUrl) {
           playResult = await fetchPlay(shouldQuarkTv ? { quark_tv: '0' } : undefined);
