@@ -1,7 +1,7 @@
 import { requestCatSpider } from '../../shared/catpawopen';
 import { initSearchPage } from '../../shared/searchClient';
 import { appendTvCardHoverOverlays, createPosterCard } from '../../shared/posterCard';
-import { apiGetJson, buildQuery } from '../../shared/apiClient';
+import { apiDeleteJson, apiGetJson, buildQuery } from '../../shared/apiClient';
 
 function attachScrollableRowControls(scrollEl, scrollDistance = 1000) {
   if (!scrollEl) return;
@@ -176,6 +176,123 @@ function setupHomeSpiderBrowse() {
   let continueItems = [];
   let continueDirty = true;
 
+  let historyContextMenuEl = null;
+  let historyContextTarget = null;
+  let historyContextDeleting = false;
+
+  const hideHistoryContextMenu = () => {
+    if (!historyContextMenuEl) return;
+    historyContextMenuEl.classList.add('hidden');
+    historyContextMenuEl.style.visibility = '';
+    historyContextTarget = null;
+  };
+
+  const ensureHistoryContextMenu = () => {
+    if (historyContextMenuEl) return historyContextMenuEl;
+    const menu = document.createElement('div');
+    menu.className = 'user-menu hidden tv-history-context-menu';
+    menu.setAttribute('role', 'menu');
+    menu.style.position = 'fixed';
+    menu.style.top = '0px';
+    menu.style.left = '0px';
+    menu.style.right = 'auto';
+    menu.style.zIndex = '50000';
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'user-menu__item danger';
+    del.setAttribute('aria-label', '删除历史记录');
+    del.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg><span>删除</span>';
+    del.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (historyContextDeleting) return;
+      const target = historyContextTarget && typeof historyContextTarget === 'object' ? historyContextTarget : null;
+      if (!target) return;
+      historyContextDeleting = true;
+      try {
+        const contentKey = typeof target.contentKey === 'string' ? target.contentKey.trim() : '';
+        const siteKey = typeof target.siteKey === 'string' ? target.siteKey.trim() : '';
+        const videoId = typeof target.videoId === 'string' ? target.videoId.trim() : '';
+        const query = contentKey ? { contentKey } : { siteKey, videoId };
+        const data = await apiDeleteJson(`/api/playhistory${buildQuery(query)}`, { dedupe: false });
+        if (!data || data.success !== true) throw new Error((data && data.message) || '删除失败');
+        continueItems = (Array.isArray(continueItems) ? continueItems : []).filter((it) => {
+          if (!it || typeof it !== 'object') return false;
+          if (contentKey) return String(it.contentKey || '').trim() !== contentKey;
+          return !(String(it.siteKey || '').trim() === siteKey && String(it.videoId || '').trim() === videoId);
+        });
+        applyContinueVisibility();
+        if (continueAllowed) renderContinue();
+        try {
+          window.dispatchEvent(new CustomEvent('tv:play-history-updated'));
+        } catch (_e) {}
+      } catch (_e) {
+        // ignore
+      } finally {
+        historyContextDeleting = false;
+        hideHistoryContextMenu();
+      }
+    });
+    menu.appendChild(del);
+
+    document.body.appendChild(menu);
+    historyContextMenuEl = menu;
+
+    const onDocPointerDown = (e) => {
+      if (!historyContextMenuEl || historyContextMenuEl.classList.contains('hidden')) return;
+      const target = e && e.target ? e.target : null;
+      if (target && target.closest && target.closest('.tv-history-context-menu')) return;
+      hideHistoryContextMenu();
+    };
+    const onKeyDown = (e) => {
+      if (!historyContextMenuEl || historyContextMenuEl.classList.contains('hidden')) return;
+      if (e && e.key === 'Escape') hideHistoryContextMenu();
+    };
+    document.addEventListener('pointerdown', onDocPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('resize', hideHistoryContextMenu);
+    window.addEventListener('scroll', hideHistoryContextMenu, true);
+
+    return menu;
+  };
+
+  const openHistoryContextMenu = (e, item) => {
+    if (!e) return;
+    if (typeof e.preventDefault === 'function') e.preventDefault();
+    if (typeof e.stopPropagation === 'function') e.stopPropagation();
+
+    const it = item && typeof item === 'object' ? item : null;
+    if (!it) return;
+    const contentKey = typeof it.contentKey === 'string' ? it.contentKey.trim() : '';
+    const siteKey = typeof it.siteKey === 'string' ? it.siteKey.trim() : '';
+    const videoId = typeof it.videoId === 'string' ? it.videoId.trim() : '';
+    if (!contentKey && (!siteKey || !videoId)) return;
+
+    const userMenu = document.getElementById('userMenu');
+    if (userMenu) userMenu.classList.add('hidden');
+
+    historyContextTarget = { contentKey, siteKey, videoId };
+    const menu = ensureHistoryContextMenu();
+    menu.classList.remove('hidden');
+    menu.style.visibility = 'hidden';
+    menu.style.left = '0px';
+    menu.style.top = '0px';
+
+    const margin = 8;
+    const vw = typeof window !== 'undefined' ? window.innerWidth || 0 : 0;
+    const vh = typeof window !== 'undefined' ? window.innerHeight || 0 : 0;
+    const rect = menu.getBoundingClientRect();
+    const mx = typeof e.clientX === 'number' ? e.clientX : 0;
+    const my = typeof e.clientY === 'number' ? e.clientY : 0;
+    const x = Math.min(Math.max(margin, mx), Math.max(margin, vw - rect.width - margin));
+    const y = Math.min(Math.max(margin, my), Math.max(margin, vh - rect.height - margin));
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+    menu.style.visibility = 'visible';
+  };
+
   let favoritesAllowed = false;
   let favoritesLoading = false;
   let favoritesItems = [];
@@ -272,6 +389,10 @@ function setupHomeSpiderBrowse() {
         siteName: it && typeof it.siteName === 'string' ? it.siteName : '',
         placeholder: true,
       });
+      const card = wrapper && wrapper.querySelector ? wrapper.querySelector('[role="link"]') : null;
+      if (card && card.addEventListener) {
+        card.addEventListener('contextmenu', (e) => openHistoryContextMenu(e, it));
+      }
       if (wrapper) frag.appendChild(wrapper);
     });
 
