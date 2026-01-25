@@ -78,6 +78,8 @@ export function createPosterCard({
   poster,
   remark,
   siteName,
+  cornerBadgeText,
+  cornerBadgeTitle,
   placeholder = true,
   overlays = true,
 } = {}) {
@@ -111,11 +113,22 @@ export function createPosterCard({
   appendLazyPosterImage(posterWrap, { poster, alt: title, io, placeholder });
   if (overlays) appendTvCardHoverOverlays(posterWrap);
 
+  const cbText = typeof cornerBadgeText === 'string' ? cornerBadgeText.trim() : '';
+  if (cbText) {
+    const badge = document.createElement('div');
+    badge.className = 'douban-rate tv-aggregate-source-count';
+    badge.textContent = cbText;
+    const cbTitle = typeof cornerBadgeTitle === 'string' ? cornerBadgeTitle.trim() : '';
+    if (cbTitle) badge.title = cbTitle;
+    posterWrap.appendChild(badge);
+  }
+
   const r = typeof remark === 'string' ? remark.trim() : '';
   if (r) {
     const tag = document.createElement('div');
     tag.className = 'tv-card-badge';
     tag.textContent = r;
+    if (cbText) tag.classList.add('tv-card-badge--left');
     posterWrap.appendChild(tag);
   }
 

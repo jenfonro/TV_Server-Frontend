@@ -136,6 +136,8 @@ export function initSearchPage() {
     siteKey,
     siteApi,
     siteName,
+    cornerBadgeText,
+    cornerBadgeTitle,
     seenKeys,
     insertCardSorted,
     computeMatchScore,
@@ -206,6 +208,8 @@ export function initSearchPage() {
         poster: it && it.pic ? String(it.pic) : '',
         remark: it && it.remark ? String(it.remark) : '',
         siteName: typeof siteName === 'string' ? siteName : '',
+        cornerBadgeText: typeof cornerBadgeText === 'string' ? cornerBadgeText : '',
+        cornerBadgeTitle: typeof cornerBadgeTitle === 'string' ? cornerBadgeTitle : '',
         placeholder: true,
       });
       if (!cardWrapper) return;
@@ -360,6 +364,7 @@ export function initSearchPage() {
     let aggregateEl = null;
     let aggregateUniq = '';
     let aggregateActive = false;
+    let aggregateSourceSiteCount = 0;
 
     const removeExistingExactCards = (aggKey) => {
       if (!aggKey) return 0;
@@ -420,6 +425,30 @@ export function initSearchPage() {
       return null;
     };
 
+    const computeAggregateSourceSiteCount = (bySite) => {
+      let n = 0;
+      for (const entry of bySite.values()) {
+        if (!entry || !entry.matches || entry.matches.size < 1) continue;
+        n += 1;
+      }
+      return n;
+    };
+
+    const formatSourceCountText = (count) => {
+      const n = Number.isFinite(Number(count)) ? Number(count) : 0;
+      if (n > 99) return '99+';
+      return String(Math.max(0, Math.floor(n)));
+    };
+
+    const applyAggregateSourceBadge = (count) => {
+      if (!aggregateEl) return;
+      const badge = aggregateEl.querySelector && aggregateEl.querySelector('.tv-aggregate-source-count');
+      if (!badge) return;
+      const n = Number.isFinite(Number(count)) ? Number(count) : 0;
+      badge.textContent = formatSourceCountText(n);
+      badge.title = `${Math.max(0, Math.floor(n))}个源`;
+    };
+
     const syncAggregateStorage = (cover, sources) => {
       if (!cover || !cover.siteKey || !cover.videoId) return;
       try {
@@ -443,6 +472,7 @@ export function initSearchPage() {
         if (!entry || !entry.matches) return [];
         return Array.from(entry.matches.values());
       });
+      const sourceSiteCount = computeAggregateSourceSiteCount(aggregateBySite);
       const cover = pickAggregateCover(aggregateBySite);
       if (!cover || !cover.siteKey || !cover.videoId) return;
       if (sources.length < 1) return;
@@ -461,6 +491,7 @@ export function initSearchPage() {
         } catch (_e) {}
         aggregateEl = null;
         aggregateUniq = '';
+        aggregateSourceSiteCount = 0;
       }
 
       // Ensure insertion isn't blocked by previous cards with the same uniq.
@@ -493,7 +524,9 @@ export function initSearchPage() {
           ],
           siteKey: cover.siteKey,
           siteApi: cover.spiderApi,
-          siteName: '聚合',
+          siteName: '',
+          cornerBadgeText: formatSourceCountText(sourceSiteCount),
+          cornerBadgeTitle: `${sourceSiteCount}个源`,
           seenKeys,
           insertCardSorted,
           computeMatchScore,
@@ -514,9 +547,15 @@ export function initSearchPage() {
           aggregateEl = after;
           aggregateUniq = uniq;
           totalFound += 1;
+          aggregateSourceSiteCount = sourceSiteCount;
+          applyAggregateSourceBadge(sourceSiteCount);
         }
       } else {
         syncAggregateStorage(cover, sources);
+        if (sourceSiteCount !== aggregateSourceSiteCount) {
+          aggregateSourceSiteCount = sourceSiteCount;
+          applyAggregateSourceBadge(sourceSiteCount);
+        }
       }
     };
 

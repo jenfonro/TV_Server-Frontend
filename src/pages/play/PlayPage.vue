@@ -105,13 +105,67 @@
 	                        class="play-player-overlay"
 	                        :class="{ 'play-player-overlay--error': playerPhase === 'error' }"
 	                      >
-	                        <div class="play-player-overlay__badge">
-	                          <svg class="play-player-overlay__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-	                            <path stroke-linecap="round" stroke-linejoin="round" d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-	                            <path stroke-linecap="round" stroke-linejoin="round" d="M14 3v6h6" />
-	                          </svg>
-	                          <div class="play-player-overlay__text">{{ playerPhaseText }}</div>
-	                          <div v-if="playerPhaseLoading" class="tv-spinner" aria-hidden="true"></div>
+	                        <div class="play-player-overlay__panel" :style="{ '--play-stage-p': playerStageProgress }">
+	                              <div class="play-player-overlay__mark" aria-hidden="true">
+	                                <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision">
+                                <defs>
+                                  <linearGradient id="playPaw" x1="360" y1="380" x2="720" y2="720" gradientUnits="userSpaceOnUse">
+                                    <stop offset="0" stop-color="#00ADD8"/>
+                                    <stop offset="0.55" stop-color="#42B883"/>
+                                    <stop offset="1" stop-color="#646CFF"/>
+                                  </linearGradient>
+                                  <linearGradient id="playScreen" x1="330" y1="350" x2="740" y2="710" gradientUnits="userSpaceOnUse">
+                                    <stop offset="0" stop-color="#1E293B"/>
+                                    <stop offset="1" stop-color="#334155"/>
+                                  </linearGradient>
+                                  <radialGradient id="playScreenShine" cx="30%" cy="22%" r="75%">
+                                    <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.14"/>
+                                    <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.04"/>
+                                    <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+                                  </radialGradient>
+                                </defs>
+
+                                <g>
+                                  <rect x="184" y="262" width="656" height="468" rx="164" fill="#E5E7EB" fill-opacity="0.34" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="10"/>
+                                  <rect x="204" y="282" width="616" height="428" rx="152" fill="#E5E7EB" fill-opacity="0.18" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="10"/>
+                                  <rect x="244" y="322" width="536" height="348" rx="132" fill="url(#playScreen)"/>
+                                  <rect x="244" y="322" width="536" height="348" rx="132" fill="url(#playScreenShine)"/>
+                                  <rect x="252" y="330" width="520" height="332" rx="124" fill="none" stroke="#FFFFFF" stroke-opacity="0.09" stroke-width="10"/>
+
+                                  <path d="M440 746 C468 792 556 792 584 746" fill="none" stroke="#E5E7EB" stroke-width="34" stroke-linecap="round" opacity="0.82"/>
+                                  <path d="M372 810 H652" fill="none" stroke="#E5E7EB" stroke-width="34" stroke-linecap="round" opacity="0.42"/>
+                                </g>
+
+                                <g>
+                                  <circle cx="410" cy="452" r="32" fill="url(#playPaw)"/>
+                                  <circle cx="476" cy="418" r="36" fill="url(#playPaw)"/>
+                                  <circle cx="548" cy="418" r="36" fill="url(#playPaw)"/>
+                                  <circle cx="614" cy="452" r="32" fill="url(#playPaw)"/>
+                                  <path d="M512 476 C448 476 396 526 396 596 C396 670 456 724 512 724 C568 724 628 670 628 596 C628 526 576 476 512 476 Z" fill="url(#playPaw)"/>
+                                  <path d="M491 576 L491 658 L571 617 Z" fill="#FFFFFF" opacity="0.95"/>
+                                </g>
+	                              </svg>
+	                              </div>
+
+                            <div class="play-player-overlay__text">
+                              <div class="play-player-overlay__status">
+                                <div class="play-player-overlay__statusText">{{ playerPhaseText }}</div>
+                                <div v-if="playerPhaseLoading" class="tv-spinner play-player-overlay__spinner" aria-hidden="true"></div>
+                              </div>
+                            </div>
+
+                            <div
+                              class="play-player-overlay__progress"
+                              role="progressbar"
+                              :aria-label="`加载进度：${Math.round(playerStageProgress * 100)}%`"
+                              :aria-valuenow="Math.round(playerStageProgress * 100)"
+                              aria-valuemin="0"
+                              aria-valuemax="100"
+                            >
+                              <div class="play-player-overlay__track" aria-hidden="true">
+                                <div class="play-player-overlay__fill"></div>
+                              </div>
+                            </div>
 	                        </div>
 	                      </div>
 	                      </div>
@@ -2783,6 +2837,48 @@ const playerPhaseText = computed(() => {
   }
 });
 
+const playerStageItems = [
+  { key: 'detail', label: '信息' },
+  { key: 'play_url', label: '地址' },
+  { key: 'play_info', label: '就绪' },
+];
+
+// 0..3 (3 means all done)
+const playerStageIndex = computed(() => {
+  switch (playerPhase.value) {
+    case 'detail':
+      return 0;
+    case 'play_url':
+      return 1;
+    case 'play_info':
+      return 2;
+    case 'ready':
+      return 3;
+    case 'error': {
+      if (playerUrl.value && playerMetaReady.value) return 3;
+      if (playerUrl.value && !playerMetaReady.value) return 2;
+      if (playLoading.value) return 1;
+      if (introLoading.value) return 0;
+      return 0;
+    }
+    case 'idle':
+    default:
+      return 0;
+  }
+});
+
+const playerStageDoneCount = computed(() => Math.max(0, Math.min(playerStageIndex.value, playerStageItems.length)));
+const playerStageActiveIndex = computed(() => Math.max(0, Math.min(playerStageIndex.value, playerStageItems.length - 1)));
+
+const playerStageProgress = computed(() => {
+  const total = playerStageItems.length || 3;
+  if (playerPhase.value === 'idle') return 0;
+  if (playerStageIndex.value >= total) return 1;
+  if (playerPhase.value === 'error') return playerStageDoneCount.value / total;
+  return (playerStageDoneCount.value + 0.5) / total;
+});
+
+
 const loadResumeFromHistory = async () => {
   resumeHistoryLoaded.value = false;
   resumeHistoryApplied.value = false;
@@ -4440,35 +4536,153 @@ watch(
   align-items: center;
   justify-content: center;
   pointer-events: none;
-}
-
-.play-player-overlay__badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: 9999px;
-  background: rgba(0, 0, 0, 0.58);
-  color: rgba(255, 255, 255, 0.92);
+  padding: 18px;
+  background:
+    radial-gradient(900px 520px at 65% 35%, rgba(99, 102, 241, 0.18), rgba(0, 0, 0, 0) 60%),
+    radial-gradient(820px 480px at 25% 30%, rgba(14, 165, 233, 0.18), rgba(0, 0, 0, 0) 58%),
+    radial-gradient(900px 520px at 40% 75%, rgba(34, 197, 94, 0.12), rgba(0, 0, 0, 0) 62%),
+    linear-gradient(180deg, rgba(2, 6, 23, 0.72), rgba(2, 6, 23, 0.42));
   backdrop-filter: blur(10px);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
 }
 
-.play-player-overlay--error .play-player-overlay__badge {
-  background: rgba(0, 0, 0, 0.62);
-  color: rgba(255, 200, 200, 0.95);
+.play-player-overlay__panel {
+  /* Constrain overall layout to a fixed "red box" area */
+  width: min(760px, 92%);
+  min-height: 200px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "mark ."
+    "mark text"
+    "mark progress"
+    "mark .";
+  grid-template-rows: 1fr auto auto 1fr;
+  column-gap: 22px;
+  row-gap: 0;
+  align-items: stretch;
+  padding: 0;
+  border-radius: 22px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
-.play-player-overlay__icon {
-  width: 18px;
-  height: 18px;
-  opacity: 0.9;
+.play-player-overlay__mark {
+  grid-area: mark;
+  align-self: stretch;
+  justify-self: start;
+  display: block;
+  height: 100%;
+  aspect-ratio: 1 / 1;
+}
+
+.play-player-overlay__mark svg {
+  height: 100%;
+  width: 100%;
+  display: block;
+  shape-rendering: geometricPrecision;
 }
 
 .play-player-overlay__text {
-  font-size: 14px;
-  font-weight: 700;
+  grid-area: text;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: 0;
+  padding-right: 10px;
+}
+
+.play-player-overlay__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: rgba(248, 250, 252, 0.96);
+}
+
+.play-player-overlay--error .play-player-overlay__status {
+  color: rgba(254, 226, 226, 0.98);
+}
+
+.play-player-overlay__statusText {
+  font-size: 26px;
+  font-weight: 900;
   letter-spacing: 0.2px;
+  line-height: 1.05;
+}
+
+.play-player-overlay__spinner {
+  border-color: rgba(255, 255, 255, 0.26);
+  border-top-color: rgba(255, 255, 255, 0.96);
+}
+
+.play-player-overlay__progress {
+  grid-area: progress;
+  width: min(520px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  align-self: start;
+  justify-self: center;
+}
+
+.play-player-overlay__track {
+  height: 6px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.play-player-overlay__fill {
+  height: 100%;
+  width: calc(var(--play-stage-p, 0) * 100%);
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #0EA5E9, #22C55E, #6366F1);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14) inset;
+}
+
+.play-player-overlay--error .play-player-overlay__fill {
+  background: linear-gradient(90deg, rgba(248, 113, 113, 0.95), rgba(251, 146, 60, 0.95));
+}
+
+@media (max-width: 520px) {
+  .play-player-overlay__panel {
+    width: min(520px, 92%);
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 16px 14px 14px;
+  }
+
+  .play-player-overlay__status {
+    justify-content: center;
+  }
+
+  .play-player-overlay__progress {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .play-player-overlay__text {
+    padding-right: 0;
+    gap: 0;
+  }
+
+  .play-player-overlay__statusText {
+    font-size: 20px;
+  }
+
+  .play-player-overlay__mark {
+    height: 96px;
+  }
 }
 
 </style>
