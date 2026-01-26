@@ -61,9 +61,10 @@
           </div>
         </div>
 
-        <div class="tv-us-divider"></div>
+        <div v-if="showDetailSettings" class="tv-us-divider"></div>
+        <div v-else class="tv-us-acc-status tv-us-detail-hint">接口地址已修改，保存后可继续设置</div>
 
-        <div class="tv-us-accordion">
+        <div v-if="showDetailSettings" class="tv-us-accordion">
           <div v-if="canShowPanSettings" class="tv-us-acc-item">
             <button class="tv-us-acc-head" type="button" @click="togglePanList">
               <span>网盘设置</span>
@@ -350,9 +351,15 @@
 
 	        <div class="tv-us-footer">
 	          <div class="tv-us-msg" :data-kind="msgKind" v-if="msg">{{ msg }}</div>
-          <button class="tv-us-save" type="button" :disabled="loading || saving" @click="save">
-            {{ saving ? '保存中...' : '保存' }}
-          </button>
+            <div class="tv-us-save-wrap">
+              <label class="tv-us-sync-save" v-if="showSyncSaveOption">
+                <input class="tv-us-checkbox" type="checkbox" :disabled="loading || saving" v-model="syncSaveToNewCatServer" />
+                <span>同步保存</span>
+              </label>
+              <button class="tv-us-save" type="button" :disabled="loading || saving" @click="save">
+                {{ saving ? '保存中...' : '保存' }}
+              </button>
+            </div>
         </div>
       </div>
     </div>
@@ -360,7 +367,7 @@
 </template>
 
 <script setup>
-	import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+	import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 	import { normalizeCatPawOpenApiBase, requestCatSpider } from './catpawopen';
 	import { apiGetJson, apiPutJson, apiPostJson } from './apiClient';
 
@@ -376,6 +383,7 @@ const catApiBase = ref('');
 const savedCatApiBase = ref('');
 const catApiKey = ref('');
 const catProxy = ref('');
+const syncSaveToNewCatServer = ref(true);
 const catProxyLoading = ref(false);
 const catProxyStatus = ref('idle'); // idle | ok | error
 const searchThreadCount = ref('5');
@@ -392,6 +400,26 @@ const tvUser = computed(() => {
 });
 const canShowPanSettings = computed(() => userRole.value !== 'admin' && userRole.value !== 'shared');
 const canShowSearchResultSettings = computed(() => userRole.value !== 'admin' && userRole.value !== 'shared');
+const normalizedSavedCatApiBase = computed(() => normalizeCatPawOpenApiBase(savedCatApiBase.value));
+const normalizedCurrentCatApiBase = computed(() => normalizeCatPawOpenApiBase(catApiBase.value));
+const showDetailSettings = computed(() => {
+  const savedRaw = String(savedCatApiBase.value || '').trim();
+  const currentRaw = String(catApiBase.value || '').trim();
+  const saved = normalizedSavedCatApiBase.value;
+  const cur = normalizedCurrentCatApiBase.value;
+  if (!saved) return currentRaw === savedRaw;
+  return cur === saved;
+});
+const showSyncSaveOption = computed(() => {
+  const saved = normalizedSavedCatApiBase.value;
+  const cur = normalizedCurrentCatApiBase.value;
+  if (!saved) return false;
+  if (!cur) return false;
+  return cur !== saved;
+});
+watch(showSyncSaveOption, (v, prev) => {
+  if (v && !prev) syncSaveToNewCatServer.value = true;
+});
 
 const msg = ref('');
 const msgKind = ref(''); // success | error
@@ -561,7 +589,13 @@ const save = async () => {
   saving.value = true;
   const prevSavedApiBase = normalizeCatPawOpenApiBase(savedCatApiBase.value);
   const nextApiBase = normalizeCatPawOpenApiBase(catApiBase.value);
-  const apiBaseChanged = !!(nextApiBase && nextApiBase !== prevSavedApiBase);
+  const apiBaseChanged = prevSavedApiBase !== nextApiBase;
+  const shouldSyncPrevConfigToNewServer = !!(
+    prevSavedApiBase &&
+    nextApiBase &&
+    nextApiBase !== prevSavedApiBase &&
+    syncSaveToNewCatServer.value
+  );
   let sitesPayload = null;
   let sitesFetchError = '';
   const normalizedForFetch = normalizeCatPawOpenApiBase(catApiBase.value);
@@ -633,33 +667,152 @@ const save = async () => {
     // Sync user's desired global proxy into CatPawOpen (best-effort; don't block saving).
     // When CatPawOpen API base changed, do NOT set proxy; instead reload current proxy from CatPawOpen.
     const proxySyncErrors = [];
+    const configSyncErrors = [];
     if (savedCatApiBase.value) {
-      try {
-        if (!apiBaseChanged) {
+      if (!apiBaseChanged) {
+        try {
           await requestCatWebsiteJson('admin/settings', {
             method: 'PUT',
             body: JSON.stringify({ proxy: String(catProxy.value || '') }),
           });
           catProxyStatus.value = 'ok';
-		        } else {
-		          await loadCatProxyRealtime();
-	          // Persist the reloaded proxy to TV_Server so next open shows correct value.
-	          try {
-	            await apiPutJson(
-	              '/api/user/settings',
-	              {
-	                catApiBase: String(catApiBase.value || '').trim(),
-	                catApiKey: String(catApiKey.value || ''),
-	                catProxy: String(catProxy.value || ''),
-	                searchThreadCount: stInt,
-	              },
-	              { dedupe: false }
-	            );
-	          } catch (_e) {}
-	        }
-	      } catch (e) {
-	        catProxyStatus.value = 'error';
-        proxySyncErrors.push((e && e.message) ? String(e.message) : '同步失败');
+        } catch (e) {
+          catProxyStatus.value = 'error';
+          proxySyncErrors.push((e && e.message) ? String(e.message) : '同步失败');
+        }
+      } else if (shouldSyncPrevConfigToNewServer && prevSavedApiBase && nextApiBase) {
+        let proxyToSync = String(catProxy.value || '');
+
+        try {
+          const nextAdmin = await requestCatWebsiteJsonByBase(nextApiBase, 'admin/settings', {
+            method: 'PUT',
+            body: JSON.stringify({ proxy: String(proxyToSync || '') }),
+          });
+          if (
+            nextAdmin &&
+            typeof nextAdmin === 'object' &&
+            nextAdmin.success === true &&
+            nextAdmin.settings &&
+            typeof nextAdmin.settings === 'object' &&
+            typeof nextAdmin.settings.proxy === 'string'
+          ) {
+            catProxy.value = nextAdmin.settings.proxy || '';
+          } else {
+            catProxy.value = String(proxyToSync || '');
+          }
+          catProxyStatus.value = 'ok';
+        } catch (e) {
+          catProxyStatus.value = 'error';
+          proxySyncErrors.push((e && e.message) ? String(e.message) : '同步失败');
+        }
+
+        try {
+          const prevPanList = await requestCatWebsiteJsonByBase(prevSavedApiBase, 'website/pans/list', { method: 'GET' });
+          const list = Array.isArray(prevPanList) ? prevPanList : [];
+          await requestCatWebsiteJsonByBase(nextApiBase, 'website/pans/list', {
+            method: 'PUT',
+            body: JSON.stringify({
+              list: list
+                .map((it) => ({
+                  key: it && typeof it.key === 'string' ? it.key : '',
+                  name: it && typeof it.name === 'string' ? it.name : '',
+                  enable: !!(it && it.enable),
+                }))
+                .filter((it) => it.key),
+            }),
+          });
+        } catch (e) {
+          const msg = (e && e.message) ? String(e.message) : '同步失败';
+          configSyncErrors.push(`网盘设置：${msg}`);
+        }
+
+        for (let i = 0; i < PAN_LOGIN_ITEMS.length; i += 1) {
+          const meta = PAN_LOGIN_ITEMS[i];
+          const key = meta && typeof meta.key === 'string' ? meta.key : '';
+          const type = meta && typeof meta.type === 'string' ? meta.type : '';
+          if (!key) continue;
+          try {
+            const prevCred = await requestCatWebsiteJsonByBase(
+              prevSavedApiBase,
+              `website/${encodeURIComponent(key)}/${type === 'account' ? 'account' : 'cookie'}`,
+              { method: 'GET' }
+            );
+            const obj = prevCred && typeof prevCred === 'object' ? prevCred : {};
+            if (type === 'account') {
+              const username = typeof obj.username === 'string' ? obj.username : '';
+              const password = typeof obj.password === 'string' ? obj.password : '';
+              if (!username && !password) continue;
+              await requestCatWebsiteJsonByBase(nextApiBase, `website/${encodeURIComponent(key)}/account`, {
+                method: 'PUT',
+                body: JSON.stringify({ username, password }),
+              });
+            } else {
+              const cookie = typeof obj.cookie === 'string' ? obj.cookie : '';
+              if (!cookie) continue;
+              await requestCatWebsiteJsonByBase(nextApiBase, `website/${encodeURIComponent(key)}/cookie`, {
+                method: 'PUT',
+                body: JSON.stringify({ cookie }),
+              });
+            }
+          } catch (e) {
+            if (e && e.status === 404) continue;
+            const msg = (e && e.message) ? String(e.message) : '同步失败';
+            configSyncErrors.push(`${key}：${msg}`);
+          }
+        }
+
+        // Persist the synced/reused proxy to TV_Server so next open shows correct value.
+        if (proxySyncErrors.length === 0) {
+          try {
+            await apiPutJson(
+              '/api/user/settings',
+              {
+                catApiBase: String(catApiBase.value || '').trim(),
+                catApiKey: String(catApiKey.value || ''),
+                catProxy: String(catProxy.value || ''),
+                searchThreadCount: stInt,
+              },
+              { dedupe: false }
+            );
+          } catch (_e) {}
+        } else {
+          // If proxy sync failed, fall back to loading proxy from the new server for display correctness.
+          try {
+            await loadCatProxyRealtime();
+            try {
+              await apiPutJson(
+                '/api/user/settings',
+                {
+                  catApiBase: String(catApiBase.value || '').trim(),
+                  catApiKey: String(catApiKey.value || ''),
+                  catProxy: String(catProxy.value || ''),
+                  searchThreadCount: stInt,
+                },
+                { dedupe: false }
+              );
+            } catch (_e) {}
+          } catch (_e) {}
+        }
+      } else {
+        try {
+          await loadCatProxyRealtime();
+          // Persist the reloaded proxy to TV_Server so next open shows correct value.
+          try {
+            await apiPutJson(
+              '/api/user/settings',
+              {
+                catApiBase: String(catApiBase.value || '').trim(),
+                catApiKey: String(catApiKey.value || ''),
+                catProxy: String(catProxy.value || ''),
+                searchThreadCount: stInt,
+              },
+              { dedupe: false }
+            );
+          } catch (_e) {}
+        } catch (e) {
+          catProxyStatus.value = 'error';
+          proxySyncErrors.push((e && e.message) ? String(e.message) : '同步失败');
+        }
       }
     }
 
@@ -709,6 +862,8 @@ const save = async () => {
     msgKind.value = 'success';
     if (proxySyncErrors.length > 0) {
       msg.value = `保存成功，但 CatPawOpen 代理同步失败：${proxySyncErrors[0]}`;
+    } else if (configSyncErrors.length > 0) {
+      msg.value = `保存成功，但 CatPawOpen 配置同步失败：${configSyncErrors[0]}`;
     } else {
       msg.value = sitesSync && sitesSync.refreshed ? `保存成功（站点 ${sitesSync.count || 0}）` : '保存成功';
     }
@@ -721,8 +876,8 @@ const save = async () => {
   }
 };
 
-const requestCatWebsiteJson = async (path, init = {}) => {
-  const normalized = normalizeCatPawOpenApiBase(catApiBase.value);
+const requestCatWebsiteJsonByBase = async (apiBase, path, init = {}) => {
+  const normalized = normalizeCatPawOpenApiBase(apiBase);
   if (!normalized) throw new Error('CatPawOpen 接口地址未设置');
   const url = new URL(path.replace(/^\//, ''), normalized);
   const headers = Object.assign({}, init.headers && typeof init.headers === 'object' ? init.headers : {});
@@ -749,6 +904,8 @@ const requestCatWebsiteJson = async (path, init = {}) => {
   }
   return data;
 };
+
+const requestCatWebsiteJson = async (path, init = {}) => requestCatWebsiteJsonByBase(catApiBase.value, path, init);
 
 const hasCatApiBase = computed(() => !!normalizeCatPawOpenApiBase(catApiBase.value));
 const shouldRequireCatApiBaseForSites = computed(() => userRole.value === 'user');
@@ -1471,6 +1628,35 @@ onBeforeUnmount(() => {
   color: rgba(220, 38, 38, 1);
 }
 
+.tv-us-save-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.tv-us-sync-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(31, 41, 55, 1);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+:global(.dark) .tv-us-sync-save {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(229, 231, 235, 1);
+}
+
 .tv-us-save {
   height: 40px;
   padding: 0 18px;
@@ -1594,6 +1780,10 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 700;
   color: rgba(107, 114, 128, 1);
+}
+
+.tv-us-detail-hint {
+  padding: 10px 2px 0;
 }
 
 :global(.dark) .tv-us-acc-status {

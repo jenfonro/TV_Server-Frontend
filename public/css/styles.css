@@ -839,6 +839,9 @@ html:not(.dark) body {
 .dark .tv-field-success{border-color:#4ade80;}
 .tv-row{display:flex;align-items:center;gap:.75rem;border-radius:.5rem;border:1px solid #e5e7eb;background:#f9fafb;padding:.5rem .75rem;}
 .dark .tv-row{border-color:rgba(255,255,255,.1);background:rgba(255,255,255,.05);}
+.tv-cpo-config-row{display:grid;grid-template-columns:18% 32% 1fr auto;column-gap:.5rem;row-gap:.25rem;align-items:center;}
+.tv-cpo-config-col{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tv-cpo-config-col-action{text-align:right;justify-self:end;}
 .content-main .more-link{font-size:.875rem;line-height:1.25rem;font-weight:600;color:#6b7280;transition:color .15s ease;}
 .content-main .more-link:hover{color:#374151;}
 .tv-scroll-row{display:flex;gap:1.5rem;overflow-x:auto;padding:.25rem 1rem 3rem;scrollbar-width:none;-webkit-overflow-scrolling:touch;}

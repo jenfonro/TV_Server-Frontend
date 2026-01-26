@@ -365,7 +365,6 @@
 		            <form id="catPawOpenSettingsForm" method="post" action="/dashboard/catpawopen/save" class="space-y-4">
 		              <div class="flex items-center gap-3">
 		                <div class="text-sm font-semibold text-gray-700 dark:text-gray-200">CatPawOpen 设置</div>
-		                <div id="catPawOpenSaveStatus" class="text-xs hidden whitespace-nowrap text-gray-500 dark:text-gray-400"></div>
 		              </div>
 			              <div>
 			                <label class="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">CatPawOpen 接口地址</label>
@@ -377,14 +376,31 @@
 			                >
 			              </div>
 			              <div>
-			                <label class="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">视频源地址</label>
-			                <input
-			                  id="catPawOpenVideoSourceUrl"
-			                  type="url"
-			                  class="tv-field"
-			                  placeholder="http://127.0.0.1:3006/config"
-			                  readonly
-			                >
+			                <div class="flex items-center gap-2 mb-1">
+			                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-200">配置列表</label>
+			                  <button
+			                    id="catPawOpenConfigListAdd"
+			                    type="button"
+			                    class="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 bg-white/60 dark:bg-white/5 text-xs text-gray-700 dark:text-gray-100 hover:bg-gray-100/50 dark:hover:bg-white/10 transition-colors duration-150"
+			                  >添加</button>
+			                </div>
+			                <input id="catPawOpenConfigListJson" type="hidden" value="[]" />
+			                <div class="tv-panel overflow-x-auto">
+			                  <div class="tv-row tv-cpo-config-row mb-2">
+			                    <span class="text-sm font-medium text-gray-600 dark:text-gray-300 tv-cpo-config-col tv-cpo-config-col-name">名称</span>
+			                    <span class="text-sm font-medium text-gray-600 dark:text-gray-300 tv-cpo-config-col tv-cpo-config-col-url">配置地址</span>
+			                    <span class="text-sm font-medium text-gray-600 dark:text-gray-300 tv-cpo-config-col tv-cpo-config-col-check">配置检测</span>
+			                    <span class="text-sm font-medium text-gray-600 dark:text-gray-300 tv-cpo-config-col tv-cpo-config-col-action">操作</span>
+			                  </div>
+			                  <ul id="catPawOpenConfigList" class="space-y-2 text-sm text-gray-700 dark:text-gray-200">
+			                    <li class="tv-row tv-cpo-config-row">
+			                      <span class="tv-cpo-config-col tv-cpo-config-col-name text-gray-500 dark:text-gray-400">-</span>
+			                      <span class="tv-cpo-config-col tv-cpo-config-col-url text-gray-500 dark:text-gray-400">-</span>
+			                      <span class="tv-cpo-config-col tv-cpo-config-col-check text-gray-500 dark:text-gray-400">-</span>
+			                      <span class="tv-cpo-config-col tv-cpo-config-col-action text-gray-500 dark:text-gray-400">-</span>
+			                    </li>
+			                  </ul>
+			                </div>
 			              </div>
 			              <div id="catPawOpenRemoteError" class="hidden rounded-lg border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-900/10 px-3 py-2 text-xs text-red-700 dark:text-red-300"></div>
 			              <div id="catPawOpenRemoteSettings" class="hidden space-y-4">
@@ -449,8 +465,9 @@
 			                </div>
 			              </div>
 			              </div>
-			              <div class="pt-1 flex justify-start">
+			              <div class="pt-1 flex flex-col items-start gap-1">
 			                <button type="submit" class="btn-green">保存</button>
+			                <div id="catPawOpenSaveStatus" class="text-xs hidden whitespace-nowrap text-gray-500 dark:text-gray-400"></div>
 			              </div>
 			            </form>
 		          </div>

@@ -34,7 +34,9 @@ export function initDashboardPage(bootstrap = {}) {
   const videoSourceSitesToggle = document.getElementById('videoSourceSitesToggle');
   const videoSourceSitesToggleIcon = document.getElementById('videoSourceSitesToggleIcon');
   const videoSourceSitesPanel = document.getElementById('videoSourceSitesPanel');
-  const catPawOpenVideoSourceUrl = document.getElementById('catPawOpenVideoSourceUrl');
+  const catPawOpenConfigListAdd = document.getElementById('catPawOpenConfigListAdd');
+  const catPawOpenConfigList = document.getElementById('catPawOpenConfigList');
+  const catPawOpenConfigListJsonInput = document.getElementById('catPawOpenConfigListJson');
   const catPawOpenPansToggle = document.getElementById('catPawOpenPansToggle');
   const catPawOpenPansToggleIcon = document.getElementById('catPawOpenPansToggleIcon');
   const catPawOpenPansPanel = document.getElementById('catPawOpenPansPanel');
@@ -87,6 +89,8 @@ export function initDashboardPage(bootstrap = {}) {
     mutedXs: 'text-xs text-gray-500 dark:text-gray-400',
     mutedMonoXs: 'text-xs text-gray-500 dark:text-gray-400 font-mono flex-shrink-0',
   };
+
+  let catPawOpenConfigListEditor = null;
 
   const createEl = (tag, options = {}) => {
     const el = document.createElement(tag);
@@ -179,6 +183,29 @@ export function initDashboardPage(bootstrap = {}) {
   };
 
   const bindInlineStatus = (el) => (type, text) => setInlineStatus(el, type, text);
+
+  const setInlineStatusHtml = (el, type, html) => {
+    if (!el) return;
+    const t = html != null ? String(html) : '';
+    if (!t) {
+      el.classList.add('hidden');
+      try {
+        el.hidden = true;
+      } catch (_e) {}
+      el.innerHTML = '';
+      el.classList.remove('text-green-600', 'text-red-600');
+      return;
+    }
+    el.classList.remove('hidden', 'text-green-600', 'text-red-600');
+    try {
+      el.hidden = false;
+    } catch (_e) {}
+    if (type === 'success') el.classList.add('text-green-600');
+    if (type === 'error') el.classList.add('text-red-600');
+    el.innerHTML = t;
+  };
+
+  const bindInlineStatusHtml = (el) => (type, html) => setInlineStatusHtml(el, type, html);
 
   const bindOnce = (el, fn) => {
     if (!el) return false;
@@ -430,26 +457,249 @@ export function initDashboardPage(bootstrap = {}) {
     }
   };
 
-  const buildCatPawOpenConfigUrl = (apiBase) => {
-    const base = normalizeCatPawOpenAdminBase(apiBase);
-    if (!base) return '';
+  const normalizeHttpUrl = (value) => {
+    const raw = typeof value === 'string' ? value.trim() : '';
+    if (!raw) return '';
     try {
-      return new URL('config', base).toString();
+      const u = new URL(raw);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+      u.hash = '';
+      return u.toString();
     } catch (_e) {
       return '';
     }
   };
 
-  const refreshCatPawOpenVideoSourceUrlField = (apiBaseOverride) => {
-    if (!catPawOpenVideoSourceUrl) return;
-    const raw =
-      typeof apiBaseOverride === 'string'
-        ? apiBaseOverride
-        : (() => {
-            const input = document.querySelector('#catPawOpenSettingsForm input[name="catPawOpenApiBase"]');
-            return input && typeof input.value === 'string' ? input.value : '';
-          })();
-    catPawOpenVideoSourceUrl.value = buildCatPawOpenConfigUrl(raw);
+  const initCatPawOpenConfigListEditor = () => {
+    if (!catPawOpenConfigList || !catPawOpenConfigListAdd) return;
+
+    const normalizeConfigItem = (it) => {
+      const obj = it && typeof it === 'object' ? it : {};
+      const name = typeof obj.name === 'string' ? obj.name.trim() : '';
+      const url = normalizeHttpUrl(typeof obj.url === 'string' ? obj.url : '');
+      const check = normalizeConfigCheckStatus(obj.check);
+      if (!url) return null;
+      return { draft: false, name: name || '未命名', url, check };
+    };
+
+    const parseInitialItems = () => {
+      if (!catPawOpenConfigListJsonInput) return [];
+      const raw = typeof catPawOpenConfigListJsonInput.value === 'string' ? catPawOpenConfigListJsonInput.value : '';
+      if (!raw.trim()) return [];
+      try {
+        const arr = JSON.parse(raw);
+        const list = Array.isArray(arr) ? arr : [];
+        return list.map(normalizeConfigItem).filter(Boolean);
+      } catch (_e) {
+        return [];
+      }
+    };
+
+    let items = parseInitialItems();
+    let draftNameInput = null;
+    let draftUrlInput = null;
+
+    const syncJsonField = () => {
+      if (!catPawOpenConfigListJsonInput) return;
+      try {
+        const saved = (items || [])
+          .filter((it) => it && it.draft !== true)
+          .map((it) => ({ name: it.name, url: it.url }));
+        catPawOpenConfigListJsonInput.value = JSON.stringify(saved);
+      } catch (_e) {
+        catPawOpenConfigListJsonInput.value = '[]';
+      }
+    };
+
+    const ensureDraftRow = () => {
+      const hasDraft = (items || []).some((it) => it && it.draft === true);
+      if (hasDraft) {
+        if (draftNameInput) draftNameInput.focus();
+        return;
+      }
+      items = (items || []).concat([{ draft: true, name: '', url: '', check: 'unchecked' }]);
+      render();
+      if (draftNameInput) draftNameInput.focus();
+    };
+
+    const mkBtn = (text, kind = '') => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      if (kind === 'green') {
+        btn.className =
+          'px-2 py-1 rounded-full border border-green-500 text-xs font-medium text-green-600 hover:bg-green-500/10 transition-colors duration-150';
+      } else if (kind === 'red') {
+        btn.className =
+          'px-2 py-1 rounded-full border border-red-500 text-xs font-medium text-red-600 hover:bg-red-500/10 transition-colors duration-150';
+      } else {
+        btn.className =
+          'px-2 py-1 rounded-full border border-gray-400 text-xs font-medium text-gray-700 hover:bg-gray-500/10 dark:border-white/20 dark:text-gray-100 dark:hover:bg-white/10 transition-colors duration-150';
+      }
+      btn.textContent = text;
+      return btn;
+    };
+
+    const render = () => {
+      syncJsonField();
+      catPawOpenConfigList.innerHTML = '';
+      draftNameInput = null;
+      draftUrlInput = null;
+
+      const list = Array.isArray(items) ? items : [];
+      if (!list.length) {
+        const li = createEl('li', { className: 'tv-row tv-cpo-config-row' });
+        li.appendChild(createEl('span', { className: `tv-cpo-config-col tv-cpo-config-col-name ${CLS.muted}`, text: '-' }));
+        li.appendChild(createEl('span', { className: `tv-cpo-config-col tv-cpo-config-col-url ${CLS.muted}`, text: '-' }));
+        li.appendChild(createEl('span', { className: `tv-cpo-config-col tv-cpo-config-col-check ${CLS.muted}`, text: '-' }));
+        li.appendChild(createEl('span', { className: `tv-cpo-config-col tv-cpo-config-col-action ${CLS.muted}`, text: '-' }));
+        catPawOpenConfigList.appendChild(li);
+        return;
+      }
+
+      list.forEach((it, idx) => {
+        const li = createEl('li', { className: 'tv-row tv-cpo-config-row' });
+
+        if (it && it.draft === true) {
+          const nameInput = document.createElement('input');
+          nameInput.type = 'text';
+          nameInput.className = 'tv-field';
+          nameInput.placeholder = '名称';
+          nameInput.value = typeof it.name === 'string' ? it.name : '';
+          nameInput.addEventListener('input', () => {
+            const next = (items || []).slice();
+            const cur = next[idx];
+            if (!cur) return;
+            cur.name = nameInput.value;
+            next[idx] = cur;
+            items = next;
+          });
+          draftNameInput = nameInput;
+
+          const urlInput = document.createElement('input');
+          urlInput.type = 'text';
+          urlInput.className = 'tv-field';
+          urlInput.placeholder = '配置地址';
+          urlInput.value = typeof it.url === 'string' ? it.url : '';
+          urlInput.addEventListener('input', () => {
+            const next = (items || []).slice();
+            const cur = next[idx];
+            if (!cur) return;
+            cur.url = urlInput.value;
+            next[idx] = cur;
+            items = next;
+          });
+          draftUrlInput = urlInput;
+
+          const checkSpan = createEl('span', { className: 'tv-cpo-config-col tv-cpo-config-col-check' });
+          checkSpan.appendChild(buildConfigCheckTag('unchecked'));
+
+          const addBtn = mkBtn('添加', 'green');
+          addBtn.classList.add('tv-cpo-config-col-action');
+          addBtn.addEventListener('click', () => {
+            const next = (items || []).slice();
+            const cur = next[idx] || {};
+            const url = normalizeHttpUrl(cur.url);
+            if (!url) {
+              urlInput.focus();
+              return;
+            }
+            const name = typeof cur.name === 'string' ? cur.name.trim() : '';
+            next[idx] = { draft: false, name: name || '未命名', url, check: 'unchecked' };
+            items = next;
+            render();
+          });
+
+          li.appendChild(nameInput);
+          li.appendChild(urlInput);
+          li.appendChild(checkSpan);
+          li.appendChild(addBtn);
+          catPawOpenConfigList.appendChild(li);
+          return;
+        }
+
+        li.appendChild(
+          createEl('span', {
+            className: 'tv-cpo-config-col tv-cpo-config-col-name truncate',
+            text: it && typeof it.name === 'string' && it.name.trim() ? it.name.trim() : '未命名',
+          })
+        );
+        li.appendChild(
+          createEl('span', {
+            className: 'tv-cpo-config-col tv-cpo-config-col-url truncate',
+            text: it && typeof it.url === 'string' ? it.url : '',
+          })
+        );
+        const checkCell = createEl('span', { className: 'tv-cpo-config-col tv-cpo-config-col-check' });
+        checkCell.appendChild(buildConfigCheckTag(it && it.check ? it.check : 'unchecked'));
+        li.appendChild(checkCell);
+        const delBtn = mkBtn('删除', 'red');
+        delBtn.classList.add('tv-cpo-config-col-action');
+        delBtn.addEventListener('click', () => {
+          items = (items || []).filter((_x, i) => i !== idx);
+          render();
+        });
+        li.appendChild(delBtn);
+        catPawOpenConfigList.appendChild(li);
+      });
+    };
+
+    catPawOpenConfigListAdd.addEventListener('click', (e) => {
+      e.preventDefault();
+      ensureDraftRow();
+    });
+
+    render();
+
+    const api = {
+      getItems: () =>
+        (items || []).filter((it) => it && it.draft !== true).map((it) => ({ name: it.name, url: it.url, check: it.check })),
+      setCheckingAll: () => {
+        let changed = false;
+        items = (items || []).map((it) => {
+          if (!it || it.draft === true) return it;
+          if (normalizeConfigCheckStatus(it.check) === 'checking') return it;
+          changed = true;
+          return { ...it, check: 'checking' };
+        });
+        if (changed) render();
+      },
+      setItems: (nextItems = []) => {
+        const prevChecksByUrl = new Map(
+          (items || [])
+            .filter((it) => it && it.draft !== true && typeof it.url === 'string')
+            .map((it) => [String(it.url || ''), typeof it.check === 'string' ? it.check : ''])
+        );
+        const arr = Array.isArray(nextItems) ? nextItems : [];
+        items = arr
+          .map((it) => normalizeConfigItem(it))
+          .filter(Boolean)
+          .map((it) => ({ ...it, check: normalizeConfigCheckStatus(prevChecksByUrl.get(it.url) || it.check) }));
+        render();
+      },
+      setChecksFromResults: (results = []) => {
+        const arr = Array.isArray(results) ? results : [];
+        const statusByUrl = new Map();
+        arr.forEach((r) => {
+          const obj = r && typeof r === 'object' ? r : {};
+          const url = normalizeHttpUrl(typeof obj.url === 'string' ? obj.url : '');
+          const status = normalizeConfigCheckStatus(obj && obj.status === 'pass' ? 'pass' : 'error');
+          if (url) statusByUrl.set(url, status);
+        });
+        let changed = false;
+        items = (items || []).map((it) => {
+          if (!it || it.draft === true) return it;
+          const url = typeof it.url === 'string' ? it.url : '';
+          if (!url || !statusByUrl.has(url)) return it;
+          const nextCheck = statusByUrl.get(url) || 'unchecked';
+          if (normalizeConfigCheckStatus(it.check) === nextCheck) return it;
+          changed = true;
+          return { ...it, check: nextCheck };
+        });
+        if (changed) render();
+      },
+    };
+
+    return api;
   };
 
   const getTvUserHeaders = () => {
@@ -457,7 +707,7 @@ export function initDashboardPage(bootstrap = {}) {
     return u ? { 'X-TV-User': u } : {};
   };
 
-  const requestCatPawOpenAdminJson = async ({ apiBase, path, method, body }) => {
+  const requestCatPawOpenAdminJson = async ({ apiBase, path, method, body, timeoutMs }) => {
     const base = normalizeCatPawOpenAdminBase(apiBase);
     if (!base) throw new Error('CatPawOpen 接口地址无效');
     const cleanPath = String(path || '').replace(/^\//, '');
@@ -465,24 +715,32 @@ export function initDashboardPage(bootstrap = {}) {
 
     const headers = { 'Content-Type': 'application/json', ...getTvUserHeaders() };
 
-    const { resp, data } = await fetchJsonSafe(
-      target.toString(),
-      {
-        method: method || 'GET',
-        headers,
-        body: body != null ? JSON.stringify(body) : undefined,
-        credentials: 'omit',
-      },
-      {}
-    );
-    const status = resp && typeof resp.status === 'number' ? resp.status : 0;
-    if (!resp.ok) {
-      const msg = data && data.message ? String(data.message) : `HTTP ${status}`;
-      const err = new Error(msg);
-      err.status = status;
-      throw err;
+    const ms = Number.isFinite(Number(timeoutMs)) ? Math.max(0, Math.trunc(Number(timeoutMs))) : 0;
+    const controller = ms > 0 && typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), ms) : null;
+    try {
+      const { resp, data } = await fetchJsonSafe(
+        target.toString(),
+        {
+          method: method || 'GET',
+          headers,
+          body: body != null ? JSON.stringify(body) : undefined,
+          credentials: 'omit',
+          signal: controller ? controller.signal : undefined,
+        },
+        {}
+      );
+      const status = resp && typeof resp.status === 'number' ? resp.status : 0;
+      if (!resp.ok) {
+        const msg = data && data.message ? String(data.message) : `HTTP ${status}`;
+        const err = new Error(msg);
+        err.status = status;
+        throw err;
+      }
+      return data;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    return data;
   };
 
   const setCatPawOpenRemoteState = (state, message = '') => {
@@ -530,6 +788,15 @@ export function initDashboardPage(bootstrap = {}) {
       if (panBuiltinInput && settingsResp && settingsResp.settings) {
         panBuiltinInput.checked = !!settingsResp.settings.panBuiltinResolverEnabled;
       }
+      if (catPawOpenConfigListEditor && settingsResp && Array.isArray(settingsResp.onlineConfigs)) {
+        catPawOpenConfigListEditor.setItems(
+          settingsResp.onlineConfigs.map((it) => ({
+            name: it && typeof it.name === 'string' ? it.name : '',
+            url: it && typeof it.url === 'string' ? it.url : '',
+            check: '',
+          }))
+        );
+      }
       setCatPawOpenRemoteState('ready');
       return { ok: true, data: { settingsResp } };
     } catch (e) {
@@ -545,18 +812,22 @@ export function initDashboardPage(bootstrap = {}) {
     const proxy = proxyInput && typeof proxyInput.value === 'string' ? proxyInput.value : '';
     const panBuiltinInput = document.getElementById('catPawOpenPanBuiltinResolverEnabled');
     const panBuiltinResolverEnabled = !!(panBuiltinInput && panBuiltinInput.checked);
+    const onlineConfigs = catPawOpenConfigListEditor ? catPawOpenConfigListEditor.getItems().map((it) => ({ name: it.name, url: it.url })) : [];
     const parts = [];
     try {
       const resp = await requestCatPawOpenAdminJson({
         apiBase: normalizedBase,
         path: 'admin/settings',
         method: 'PUT',
-        body: { proxy: String(proxy || ''), panBuiltinResolverEnabled },
+        body: { proxy: String(proxy || ''), panBuiltinResolverEnabled, onlineConfigs },
       });
       if (proxyInput && resp && resp.settings && typeof resp.settings.proxy === 'string') {
         proxyInput.value = resp.settings.proxy || '';
       }
       if (panBuiltinInput && resp && resp.settings) panBuiltinInput.checked = !!resp.settings.panBuiltinResolverEnabled;
+      if (catPawOpenConfigListEditor && resp && Array.isArray(resp.onlineConfigs)) {
+        catPawOpenConfigListEditor.setChecksFromResults(resp.onlineConfigs);
+      }
       return { ok: true, parts: [], data: resp };
     } catch (err) {
       const msg = err && err.message ? String(err.message) : '同步失败';
@@ -1616,6 +1887,32 @@ export function initDashboardPage(bootstrap = {}) {
     return span;
   };
 
+  const normalizeConfigCheckStatus = (v) => {
+    const raw = typeof v === 'string' ? v.trim() : '';
+    if (raw === 'pass' || raw === 'error' || raw === 'unchecked' || raw === 'checking') return raw;
+    return 'unchecked';
+  };
+  const formatConfigCheckText = (status) => {
+    const s = normalizeConfigCheckStatus(status);
+    if (s === 'pass') return '通过';
+    if (s === 'error') return '异常';
+    if (s === 'checking') return '检测中';
+    return '未检测';
+  };
+  const configCheckClassFor = (status) => {
+    const s = normalizeConfigCheckStatus(status);
+    if (s === 'pass') return 'tag-green';
+    if (s === 'error') return 'tag-yellow';
+    if (s === 'checking') return 'tag-gray';
+    return 'tag-gray';
+  };
+  const buildConfigCheckTag = (status) => {
+    const span = document.createElement('span');
+    span.className = `availability-tag ${configCheckClassFor(status)}`;
+    span.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/></svg>${formatConfigCheckText(status)}`;
+    return span;
+  };
+
   const syncVideoSourceHeaderCheckbox = () => {
     if (!videoSourceHeaderCheckbox) return;
     const keys = currentVideoSourceSites.map((s) => (s && s.key) || '').filter(Boolean);
@@ -2540,7 +2837,6 @@ export function initDashboardPage(bootstrap = {}) {
         const catForm = document.getElementById('catPawOpenSettingsForm');
         const apiInput = catForm ? catForm.querySelector('input[name="catPawOpenApiBase"]') : null;
         if (apiInput) apiInput.value = settings.catPawOpenApiBase || '';
-        refreshCatPawOpenVideoSourceUrlField(apiInput && typeof apiInput.value === 'string' ? apiInput.value : '');
 
         const openListApiInput = openListSettingsForm
           ? openListSettingsForm.querySelector('input[name="openListApiBase"]')
@@ -2593,14 +2889,115 @@ export function initDashboardPage(bootstrap = {}) {
   const catPawOpenForm = document.getElementById('catPawOpenSettingsForm');
   const catPawOpenSaveStatus = document.getElementById('catPawOpenSaveStatus');
   const setCatPawOpenSaveStatus = bindInlineStatus(catPawOpenSaveStatus);
+  const setCatPawOpenSaveStatusHtml = bindInlineStatusHtml(catPawOpenSaveStatus);
   bindOnce(catPawOpenForm, () => {
     const apiInput = catPawOpenForm ? catPawOpenForm.querySelector('input[name="catPawOpenApiBase"]') : null;
-    if (apiInput) {
-      const syncDisplay = () => refreshCatPawOpenVideoSourceUrlField(apiInput.value);
-      apiInput.addEventListener('input', syncDisplay);
-      apiInput.addEventListener('change', syncDisplay);
-      syncDisplay();
-    }
+    catPawOpenConfigListEditor = initCatPawOpenConfigListEditor();
+
+    const submitBtn = catPawOpenForm ? catPawOpenForm.querySelector('button[type="submit"]') : null;
+    const submitBtnOriginalHtml = submitBtn ? submitBtn.innerHTML : '';
+    const setSubmitBtnLoading = (loading) => {
+      if (!submitBtn) return;
+      if (loading) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>`;
+      } else {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = submitBtnOriginalHtml || '保存';
+      }
+    };
+
+    let checkingDotsTimer = null;
+    let restartDotsTimer = null;
+    let restartPollTimer = null;
+    let restartStartedAt = 0;
+    let restartToken = 0;
+
+    const stopRestartWatch = () => {
+      restartToken += 1;
+      if (checkingDotsTimer) clearInterval(checkingDotsTimer);
+      if (restartDotsTimer) clearInterval(restartDotsTimer);
+      if (restartPollTimer) clearInterval(restartPollTimer);
+      checkingDotsTimer = null;
+      restartDotsTimer = null;
+      restartPollTimer = null;
+      restartStartedAt = 0;
+    };
+
+    const renderCheckingStatus = ({ dots = 0, failed = false } = {}) => {
+      const dotText = failed ? '' : '.'.repeat(Math.max(0, Math.min(3, dots)));
+      const inner = failed
+        ? `<span class="text-red-600">CatPawOpen检测配置异常</span>`
+        : `<span class="text-gray-500 dark:text-gray-400">CatPawOpen检测配置中${dotText}</span>`;
+      setCatPawOpenSaveStatusHtml('success', `保存成功(${inner})`);
+    };
+
+    const renderRestartingStatus = ({ dots = 0, failed = false } = {}) => {
+      const dotText = failed ? '' : '.'.repeat(Math.max(0, Math.min(3, dots)));
+      const inner = failed
+        ? `<span class="text-red-600">Catpawopen启动异常</span>`
+        : `<span class="text-gray-500 dark:text-gray-400">CatPawOpen重启中${dotText}</span>`;
+      setCatPawOpenSaveStatusHtml('success', `保存成功(${inner})`);
+    };
+
+    const renderRestartDoneStatus = () => {
+      setCatPawOpenSaveStatusHtml('success', `保存成功(<span class="text-gray-500 dark:text-gray-400">CatPawOpen重启完成</span>)`);
+    };
+
+    const startCheckingWatch = () => {
+      const token = restartToken;
+      if (checkingDotsTimer) clearInterval(checkingDotsTimer);
+      let dots = 0;
+      renderCheckingStatus({ dots, failed: false });
+      checkingDotsTimer = setInterval(() => {
+        if (token !== restartToken) return;
+        dots = (dots + 1) % 4;
+        renderCheckingStatus({ dots, failed: false });
+      }, 500);
+    };
+
+    const startRestartWatch = (apiBase) => {
+      stopRestartWatch();
+      const token = restartToken;
+      restartStartedAt = Date.now();
+
+      let dots = 0;
+      renderRestartingStatus({ dots, failed: false });
+      restartDotsTimer = setInterval(() => {
+        dots = (dots + 1) % 4;
+        renderRestartingStatus({ dots, failed: false });
+      }, 500);
+
+      setTimeout(() => {
+        if (token !== restartToken) return;
+        const startPoll = () => {
+          const checkOnce = async () => {
+            if (token !== restartToken) return;
+            const elapsed = Date.now() - restartStartedAt;
+            if (elapsed > 60000) {
+              stopRestartWatch();
+              renderRestartingStatus({ failed: true });
+              return;
+            }
+            try {
+              await requestCatPawOpenAdminJson({
+                apiBase,
+                path: 'admin/settings',
+                method: 'GET',
+                timeoutMs: 4000,
+              });
+              stopRestartWatch();
+              renderRestartDoneStatus();
+            } catch (_e) {
+              // keep polling
+            }
+          };
+          checkOnce();
+          restartPollTimer = setInterval(checkOnce, 2000);
+        };
+        startPoll();
+      }, 1000);
+    };
 
     const syncPanLoginBtn = document.getElementById('catPawOpenSyncPanLoginSettingsBtn');
     const syncPanLoginStatus = document.getElementById('catPawOpenSyncPanLoginSettingsStatus');
@@ -2645,6 +3042,8 @@ export function initDashboardPage(bootstrap = {}) {
     catPawOpenForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       await withDatasetLock(catPawOpenForm, 'pending', async () => {
+        stopRestartWatch();
+        setSubmitBtnLoading(true);
         setCatPawOpenSaveStatus('', '保存中...');
         try {
           const apiBase = apiInput && typeof apiInput.value === 'string' ? apiInput.value : '';
@@ -2654,11 +3053,12 @@ export function initDashboardPage(bootstrap = {}) {
             setCatPawOpenSaveStatus('error', (data && data.message) || '保存失败');
             return;
           }
+          // "保存成功" only indicates the TV_Server dashboard setting was persisted.
+          setCatPawOpenSaveStatus('success', '保存成功');
 
           const normalizedBase = normalizeCatPawOpenAdminBase(apiBase);
           if (!normalizedBase) {
             await refreshCatPawOpenRemoteSettings(apiBase);
-            setCatPawOpenSaveStatus('success', '保存成功');
             return;
           }
 
@@ -2666,15 +3066,33 @@ export function initDashboardPage(bootstrap = {}) {
           const canSync = !!(remoteSettingsEl && !remoteSettingsEl.classList.contains('hidden'));
           if (!canSync) {
             await refreshCatPawOpenRemoteSettings(apiBase);
-            setCatPawOpenSaveStatus('success', '保存成功');
             return;
           }
 
+          if (catPawOpenConfigListEditor && typeof catPawOpenConfigListEditor.setCheckingAll === 'function') {
+            catPawOpenConfigListEditor.setCheckingAll();
+          }
+          startCheckingWatch();
           const sync = await syncCatPawOpenRemoteSettings(apiBase);
-          if (sync && sync.ok === false) setCatPawOpenSaveStatus('error', 'CatPawOpen 同步失败');
-          else setCatPawOpenSaveStatus('success', '保存成功');
+          if (checkingDotsTimer) {
+            clearInterval(checkingDotsTimer);
+            checkingDotsTimer = null;
+          }
+          if (sync && sync.ok === false) {
+            renderCheckingStatus({ failed: true });
+            return;
+          }
+          const willRestart = !!(sync && sync.data && sync.data.restart);
+          if (willRestart) {
+            startRestartWatch(apiBase);
+          } else {
+            setCatPawOpenSaveStatus('success', '保存成功');
+          }
         } catch (_err) {
+          stopRestartWatch();
           setCatPawOpenSaveStatus('error', '保存失败');
+        } finally {
+          setSubmitBtnLoading(false);
         }
       });
     });
