@@ -499,13 +499,13 @@ const props = defineProps({ bootstrap: { type: Object, required: true } });
 const bootstrap = props.bootstrap;
 
 const appVersion =
-  (typeof window !== 'undefined' && window.__TV_SERVER_VERSION__) || 'beta';
+  (typeof window !== 'undefined' && window.__MEOWFILM_VERSION__) || 'beta';
 
-const LAST_SITE_KEY = 'tv_server_last_site_key';
-const LAST_SITE_NAME_KEY = 'tv_server_last_site_name';
-const LAST_VISITED_SITE_KEY = 'tv_server_last_visited_site_key';
-const LAST_VISITED_SITE_NAME_KEY = 'tv_server_last_visited_site_name';
-const HOME_VIEW_KEY = 'tv_server_home_view';
+const LAST_SITE_KEY = 'meowfilm_last_site_key';
+const LAST_SITE_NAME_KEY = 'meowfilm_last_site_name';
+const LAST_VISITED_SITE_KEY = 'meowfilm_last_visited_site_key';
+const LAST_VISITED_SITE_NAME_KEY = 'meowfilm_last_visited_site_name';
+const HOME_VIEW_KEY = 'meowfilm_home_view';
 
 	const isPlayView = ref(false);
 	let scrollBeforePlayY = 0;

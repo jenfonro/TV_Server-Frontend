@@ -1,5 +1,5 @@
 {
-  "name": "tv_server_frontend",
+  "name": "meowfilm_frontend",
   "private": true,
   "scripts": {
     "build": "vite build"

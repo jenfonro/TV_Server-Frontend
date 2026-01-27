@@ -761,7 +761,7 @@ const save = async () => {
           }
         }
 
-        // Persist the synced/reused proxy to TV_Server so next open shows correct value.
+        // Persist the synced/reused proxy so next open shows correct value.
         if (proxySyncErrors.length === 0) {
           try {
             await apiPutJson(
@@ -796,7 +796,7 @@ const save = async () => {
       } else {
         try {
           await loadCatProxyRealtime();
-          // Persist the reloaded proxy to TV_Server so next open shows correct value.
+          // Persist the reloaded proxy so next open shows correct value.
           try {
             await apiPutJson(
               '/api/user/settings',
@@ -911,7 +911,7 @@ const hasCatApiBase = computed(() => !!normalizeCatPawOpenApiBase(catApiBase.val
 const shouldRequireCatApiBaseForSites = computed(() => userRole.value === 'user');
 const canShowUserSitesSettings = computed(() => userRole.value !== 'shared' || !!(savedCatApiBase.value || '').trim());
 
-// -------------------- 用户站点列表（TV_Server 入库） --------------------
+// -------------------- 用户站点列表（入库） --------------------
 const userSitesOpen = ref(false);
 const userSitesLoading = ref(false);
 const userSitesSaving = ref(false);

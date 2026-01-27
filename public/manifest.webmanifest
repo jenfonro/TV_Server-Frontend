@@ -1,6 +1,6 @@
 {
-  "name": "TV Server",
-  "short_name": "TV",
+  "name": "MeowFilm",
+  "short_name": "MeowFilm",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0b1220",

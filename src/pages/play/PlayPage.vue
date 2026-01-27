@@ -2361,7 +2361,7 @@ const isWodePanVideoId = (videoId) => {
 
 const getDefaultQuarkTvUserDir = (tvUser) => {
   const user = sanitizeTvUsername(tvUser);
-  return `TV_Server/${user}`;
+  return `MeowFilm/${user}`;
 };
 
 const normalizeOpenListMountPath = (value) => {
@@ -3396,7 +3396,7 @@ onMounted(() => {
     const resizer = document.getElementById('episodePanelResizer');
     const panel = document.getElementById('episodePanel');
     if (grid && resizer && panel) {
-      const STORAGE_KEY = 'tv_server_episode_panel_width';
+      const STORAGE_KEY = 'meowfilm_episode_panel_width';
       let dragging = false;
       let startX = 0;
       let startW = 0;
@@ -3438,7 +3438,9 @@ onMounted(() => {
           rafId = 0;
         }
         try {
-          if (currentW) localStorage.setItem(STORAGE_KEY, String(currentW));
+          if (currentW) {
+            localStorage.setItem(STORAGE_KEY, String(currentW));
+          }
         } catch (_e) {}
         document.body.style.userSelect = '';
         document.body.style.cursor = '';

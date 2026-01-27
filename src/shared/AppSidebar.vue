@@ -536,11 +536,11 @@ const props = defineProps({
   showSiteNavOverlays: { type: Boolean, default: false },
 });
 
-const LAST_SITE_KEY = 'tv_server_last_site_key';
-const HOME_VIEW_KEY = 'tv_server_home_view';
-const LAST_SITE_NAME_KEY = 'tv_server_last_site_name';
-const LAST_VISITED_SITE_KEY = 'tv_server_last_visited_site_key';
-const LAST_VISITED_SITE_NAME_KEY = 'tv_server_last_visited_site_name';
+const LAST_SITE_KEY = 'meowfilm_last_site_key';
+const HOME_VIEW_KEY = 'meowfilm_home_view';
+const LAST_SITE_NAME_KEY = 'meowfilm_last_site_name';
+const LAST_VISITED_SITE_KEY = 'meowfilm_last_visited_site_key';
+const LAST_VISITED_SITE_NAME_KEY = 'meowfilm_last_visited_site_name';
 
 const homeViewState = ref('home'); // 'home' | 'search' | 'douban:*'
 const activeSiteKeyState = ref('');

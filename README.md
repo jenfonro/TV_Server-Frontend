@@ -1,6 +1,6 @@
-# TV_Server-Frontend
+# MeowFilm-Frontend
 
-TV Server 前端（Vite + Vue）。
+MeowFilm 前端（Vite + Vue）。
 
 ## 构建
 

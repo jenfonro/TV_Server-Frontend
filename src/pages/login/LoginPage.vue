@@ -40,7 +40,7 @@ const props = defineProps({
 });
 
 const appVersion =
-  (typeof window !== 'undefined' && window.__TV_SERVER_VERSION__) || 'beta';
+  (typeof window !== 'undefined' && window.__MEOWFILM_VERSION__) || 'beta';
 
 const username = ref('');
 const password = ref('');

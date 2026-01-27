@@ -3791,7 +3791,7 @@ export function initDashboardPage(bootstrap = {}) {
             setCatPawOpenSaveStatus('error', (data && data.message) || '保存失败');
             return;
           }
-          // "保存成功" only indicates the TV_Server dashboard setting was persisted.
+          // "保存成功" only indicates the dashboard setting was persisted.
           setCatPawOpenSaveStatus('success', '保存成功');
 
           const normalizedBase = normalizeCatPawOpenAdminBase(apiBase);

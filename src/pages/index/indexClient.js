@@ -1246,8 +1246,8 @@ function setupHomeSpiderBrowse() {
     } catch (_e) {}
     if (name) return name;
     try {
-      name = (localStorage.getItem('tv_server_last_visited_site_name') || '').trim();
-      if (!name) name = (localStorage.getItem('tv_server_last_site_name') || '').trim();
+      name = (localStorage.getItem('meowfilm_last_visited_site_name') || '').trim();
+      if (!name) name = (localStorage.getItem('meowfilm_last_site_name') || '').trim();
     } catch (_e) {
       name = '';
     }
@@ -1286,7 +1286,7 @@ function setupHomeSpiderBrowse() {
   });
 
   try {
-    const HOME_VIEW_KEY = 'tv_server_home_view';
+    const HOME_VIEW_KEY = 'meowfilm_home_view';
     const view = (localStorage.getItem(HOME_VIEW_KEY) || '').trim();
     if (view && view.startsWith('douban:')) {
       const t = view.slice('douban:'.length);
@@ -1294,11 +1294,24 @@ function setupHomeSpiderBrowse() {
     }
   } catch (_e) {}
 
-  const LAST_SITE_KEY = 'tv_server_last_site_key';
-  const LAST_VISITED_SITE_KEY = 'tv_server_last_visited_site_key';
-  const LAST_VISITED_SITE_NAME_KEY = 'tv_server_last_visited_site_name';
-  const HOME_VIEW_KEY = 'tv_server_home_view';
-  const SITE_CLASS_CACHE_PREFIX = 'tv_server_site_classes_';
+  const LAST_SITE_KEY = 'meowfilm_last_site_key';
+  const LAST_VISITED_SITE_KEY = 'meowfilm_last_visited_site_key';
+  const LAST_VISITED_SITE_NAME_KEY = 'meowfilm_last_visited_site_name';
+  const HOME_VIEW_KEY = 'meowfilm_home_view';
+  const SITE_CLASS_CACHE_PREFIX = 'meowfilm_site_classes_';
+  const lsGet = (key) => {
+    try {
+      return (localStorage.getItem(key) || '').trim();
+    } catch (_e) {
+      return '';
+    }
+  };
+
+  const lsSet = (key, value) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (_e) {}
+  };
 
   let activeSiteApi = '';
   let activeSiteKey = '';
@@ -1306,8 +1319,8 @@ function setupHomeSpiderBrowse() {
 
   const SITE_HOME_CACHE_MAX = 2;
   const siteHomeCache = new Map();
-  const SITE_HOME_SESSION_PREFIX = 'tv_server_site_home_cache_';
-  const SITE_HOME_SESSION_KEYS = 'tv_server_site_home_cache_keys';
+  const SITE_HOME_SESSION_PREFIX = 'meowfilm_site_home_cache_';
+  const SITE_HOME_SESSION_KEYS = 'meowfilm_site_home_cache_keys';
   const revalidatedSiteHomeKeys = new Set();
 
   const shouldRevalidateSessionCachedSiteHomeOnce = (siteKey) => {
@@ -1716,10 +1729,8 @@ function setupHomeSpiderBrowse() {
       const classes = normalizeClasses(data);
       try {
         if (activeSiteKey) {
-          localStorage.setItem(
-            `${SITE_CLASS_CACHE_PREFIX}${activeSiteKey}`,
-            JSON.stringify({ ts: Date.now(), classes })
-          );
+          const payload = JSON.stringify({ ts: Date.now(), classes });
+          localStorage.setItem(`${SITE_CLASS_CACHE_PREFIX}${activeSiteKey}`, payload);
         }
       } catch (_e) {}
       if (!classes.length) {
@@ -1847,12 +1858,12 @@ function setupHomeSpiderBrowse() {
 
     try {
       if (key) {
-        localStorage.setItem(LAST_SITE_KEY, key);
-        localStorage.setItem(LAST_VISITED_SITE_KEY, key);
-        if (siteName) localStorage.setItem(LAST_VISITED_SITE_NAME_KEY, siteName);
+        lsSet(LAST_SITE_KEY, key);
+        lsSet(LAST_VISITED_SITE_KEY, key);
+        if (siteName) lsSet(LAST_VISITED_SITE_NAME_KEY, siteName);
       }
     } catch (_e) {}
-  });
+	  });
 
   try {
     window.addEventListener('tv:site-category-more', (e) => {
@@ -1867,7 +1878,7 @@ function setupHomeSpiderBrowse() {
 
   const autoSelectFromStorage = () => {
     try {
-      const key = (localStorage.getItem(LAST_SITE_KEY) || '').trim();
+      const key = lsGet(LAST_SITE_KEY);
       if (!key || key === 'home') return false;
       const esc = typeof CSS !== 'undefined' && CSS && typeof CSS.escape === 'function' ? CSS.escape(key) : key;
       const a = siteList.querySelector(`a[data-site-key="${esc}"]`);
@@ -1882,7 +1893,7 @@ function setupHomeSpiderBrowse() {
 
   const showHomeFromStorage = () => {
     try {
-      const view = (localStorage.getItem(HOME_VIEW_KEY) || '').trim();
+      const view = lsGet(HOME_VIEW_KEY);
       if (view && view.startsWith('douban:')) showDoubanType(view.slice('douban:'.length));
       else showHomeDouban();
     } catch (_e) {
@@ -1892,7 +1903,7 @@ function setupHomeSpiderBrowse() {
 
   let wantsSite = false;
   try {
-    const key = (localStorage.getItem(LAST_SITE_KEY) || '').trim();
+    const key = lsGet(LAST_SITE_KEY);
     wantsSite = !!(key && key !== 'home');
   } catch (_e) {
     wantsSite = false;
@@ -2723,13 +2734,12 @@ export function initIndexPage() {
 	          loadBrowse({ type: browseState.type, category: browseState.category, area: browseState.area });
 	        });
 
-	        try {
-          const HOME_VIEW_KEY = 'tv_server_home_view';
-          const view = (localStorage.getItem(HOME_VIEW_KEY) || '').trim();
-	          if (view && view.startsWith('douban:')) {
-	            const t = view.slice('douban:'.length);
-	            const real = DOUBAN_FILTERS[t] ? t : 'movie';
-	            const cfg = DOUBAN_FILTERS[real];
+			        try {
+		          const view = lsGet(HOME_VIEW_KEY);
+			          if (view && view.startsWith('douban:')) {
+			            const t = view.slice('douban:'.length);
+			            const real = DOUBAN_FILTERS[t] ? t : 'movie';
+			            const cfg = DOUBAN_FILTERS[real];
 	            browseState = {
 	              type: real,
 	              category: cfg.defaultCategory || (cfg.categories && cfg.categories[0] ? cfg.categories[0].value : ''),
@@ -2820,11 +2830,10 @@ export function initIndexPage() {
           });
         } catch (_e) {}
 
-        const shouldSkipDoubanRows = () => {
-          try {
-            const LAST_SITE_KEY = 'tv_server_last_site_key';
-            const keyFromStorage = (localStorage.getItem(LAST_SITE_KEY) || '').trim();
-            if (!keyFromStorage || keyFromStorage === 'home') return false;
+		        const shouldSkipDoubanRows = () => {
+		          try {
+		            const keyFromStorage = lsGet(LAST_SITE_KEY);
+		            if (!keyFromStorage || keyFromStorage === 'home') return false;
 
             const siteList = document.getElementById('homeSiteNavList');
             if (!siteList) return false;
@@ -2845,13 +2854,12 @@ export function initIndexPage() {
           if (siteSections) siteSections.classList.remove('hidden');
           if (doubanSections) doubanSections.classList.add('hidden');
           if (doubanBrowse) doubanBrowse.classList.add('hidden');
-        } else {
-          try {
-            const HOME_VIEW_KEY = 'tv_server_home_view';
-            const view = (localStorage.getItem(HOME_VIEW_KEY) || '').trim();
-            if (!view || view === 'home') ensureHomeRowsLoaded();
-          } catch (_e) {
-            ensureHomeRowsLoaded();
-          }
-        }
+		        } else {
+		          try {
+		            const view = lsGet(HOME_VIEW_KEY);
+		            if (!view || view === 'home') ensureHomeRowsLoaded();
+		          } catch (_e) {
+		            ensureHomeRowsLoaded();
+		          }
+		        }
 }

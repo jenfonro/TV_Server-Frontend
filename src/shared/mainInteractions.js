@@ -35,6 +35,7 @@ export function initMainInteractions() {
   const sunIcon = document.querySelector('#themeToggleBtn .sun');
   const moonIcon = document.querySelector('#themeToggleBtn .moon');
   if (themeBtn) {
+    const STORAGE_KEY = 'meowfilm_theme';
     const applyTheme = (dark) => {
       document.documentElement.classList.toggle('dark', dark);
       document.body.classList.toggle('dark', dark);
@@ -43,9 +44,9 @@ export function initMainInteractions() {
         sunIcon.classList.toggle('hidden', !dark);
         moonIcon.classList.toggle('hidden', dark);
       }
-      localStorage.setItem('tv_server_theme', dark ? 'dark' : 'light');
+      localStorage.setItem(STORAGE_KEY, dark ? 'dark' : 'light');
     };
-    const saved = localStorage.getItem('tv_server_theme') || localStorage.getItem('tvbox_theme');
+    const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('tvbox_theme');
     const initialDark = saved === 'dark';
     applyTheme(initialDark);
     themeBtn.addEventListener('click', () => {
