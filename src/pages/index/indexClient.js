@@ -1766,48 +1766,60 @@ function setupHomeSpiderBrowse() {
         await new Promise((r) => setTimeout(r, 0));
       };
 
-      await yieldToPaint();
+	      await yieldToPaint();
 
-      for (let i = 0; i < classes.length; i += 1) {
-        if (seq !== loadSeq) return;
-        const c = classes[i];
-        const ui = c && c.__ui ? c.__ui : null;
-        if (!ui) continue;
-        try {
-          const tid = c && c.id ? c.id : '';
-          // eslint-disable-next-line no-await-in-loop
-          const resp = await requestSpider('category', activeSiteApi, {
-            id: tid,
-            page: 1,
-            filter: true,
-            filters: {},
-          });
-          if (seq !== loadSeq) return;
-          const items = normalizeList(resp);
-          renderRowItems(ui.row, items);
-          const idx = cacheRecord.classes.findIndex((x) => x.id === tid);
-          if (idx >= 0) cacheRecord.classes[idx].items = items;
-          ui.status.textContent = '';
-          ui.status.classList.add('hidden');
-          ui.more.classList.remove('hidden');
-        } catch (e) {
-          if (seq !== loadSeq) return;
-          ui.status.textContent = formatHttpError(e);
-          ui.status.classList.add('text-red-500', 'dark:text-red-400');
-          ui.status.classList.remove('hidden');
-          ui.more.classList.add('hidden');
-          renderRowItems(ui.row, []);
-          const tid = c && c.id ? c.id : '';
-          const idx = cacheRecord.classes.findIndex((x) => x.id === tid);
-          if (idx >= 0) cacheRecord.classes[idx].items = [];
-        }
-        // eslint-disable-next-line no-await-in-loop
-        await yieldToPaint();
-      }
+	      // Category fetch: concurrency-limited (max 5 in-flight), start in order.
+	      const maxConcurrent = 5;
+	      let nextIndex = 0;
+	      const workerCount = Math.max(1, Math.min(maxConcurrent, classes.length));
 
-      putCachedSiteHome(cacheKey, cacheRecord);
-    } catch (e) {
-      if (seq !== loadSeq) return;
+	      const runOne = async (c) => {
+	        const ui = c && c.__ui ? c.__ui : null;
+	        if (!ui) return;
+	        const tid = c && c.id ? c.id : '';
+	        try {
+	          const resp = await requestSpider('category', activeSiteApi, {
+	            id: tid,
+	            page: 1,
+	            filter: true,
+	            filters: {},
+	          });
+	          if (seq !== loadSeq) return;
+	          const items = normalizeList(resp);
+	          renderRowItems(ui.row, items);
+	          const idx = cacheRecord.classes.findIndex((x) => x.id === tid);
+	          if (idx >= 0) cacheRecord.classes[idx].items = items;
+	          ui.status.textContent = '';
+	          ui.status.classList.add('hidden');
+	          ui.more.classList.remove('hidden');
+	        } catch (e) {
+	          if (seq !== loadSeq) return;
+	          ui.status.textContent = formatHttpError(e);
+	          ui.status.classList.add('text-red-500', 'dark:text-red-400');
+	          ui.status.classList.remove('hidden');
+	          ui.more.classList.add('hidden');
+	          renderRowItems(ui.row, []);
+	          const idx = cacheRecord.classes.findIndex((x) => x.id === tid);
+	          if (idx >= 0) cacheRecord.classes[idx].items = [];
+	        }
+	      };
+
+	      const worker = async () => {
+	        while (true) {
+	          if (seq !== loadSeq) return;
+	          const i = nextIndex;
+	          nextIndex += 1;
+	          if (i >= classes.length) return;
+	          const c = classes[i];
+	          await runOne(c);
+	        }
+	      };
+
+	      await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+	      putCachedSiteHome(cacheKey, cacheRecord);
+	    } catch (e) {
+	      if (seq !== loadSeq) return;
       siteSections.innerHTML = '';
       siteSections.classList.remove('hidden');
       doubanSections.classList.add('hidden');
