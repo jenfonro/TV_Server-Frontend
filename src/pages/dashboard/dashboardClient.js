@@ -499,6 +499,36 @@ export function initDashboardPage(bootstrap = {}) {
   const initCatPawOpenConfigListEditor = () => {
     if (!catPawOpenConfigList || !catPawOpenConfigListAdd) return;
 
+    const CHECK_CACHE_KEY = 'meowfilm_catpawopen_online_check_v1';
+    const loadCheckCache = () => {
+      try {
+        const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(CHECK_CACHE_KEY) : '';
+        const parsed = raw && raw.trim() ? JSON.parse(raw) : null;
+        const obj = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        const out = new Map();
+        Object.entries(obj).forEach(([k, v]) => {
+          const url = normalizeHttpUrl(k);
+          const check = normalizeConfigCheckStatus(v);
+          if (url && check && check !== 'unchecked') out.set(url, check);
+        });
+        return out;
+      } catch (_e) {
+        return new Map();
+      }
+    };
+    const saveCheckCache = (map) => {
+      try {
+        if (typeof localStorage === 'undefined') return;
+        const obj = {};
+        (map instanceof Map ? Array.from(map.entries()) : []).forEach(([k, v]) => {
+          const url = normalizeHttpUrl(k);
+          const check = normalizeConfigCheckStatus(v);
+          if (url && check && check !== 'unchecked') obj[url] = check;
+        });
+        localStorage.setItem(CHECK_CACHE_KEY, JSON.stringify(obj));
+      } catch (_e) {}
+    };
+
     const normalizeConfigItem = (it) => {
       const obj = it && typeof it === 'object' ? it : {};
       const name = typeof obj.name === 'string' ? obj.name.trim() : '';
@@ -524,6 +554,7 @@ export function initDashboardPage(bootstrap = {}) {
     let items = parseInitialItems();
     let draftNameInput = null;
     let draftUrlInput = null;
+    let checkCache = loadCheckCache();
 
     const syncJsonField = () => {
       if (!catPawOpenConfigListJsonInput) return;
@@ -661,6 +692,14 @@ export function initDashboardPage(bootstrap = {}) {
         const delBtn = mkBtn('删除', 'red');
         delBtn.classList.add('tv-cpo-config-col-action');
         delBtn.addEventListener('click', () => {
+          try {
+            const cur = items && items[idx] ? items[idx] : null;
+            const url = cur && typeof cur.url === 'string' ? normalizeHttpUrl(cur.url) : '';
+            if (url && checkCache instanceof Map && checkCache.has(url)) {
+              checkCache.delete(url);
+              saveCheckCache(checkCache);
+            }
+          } catch (_e) {}
           items = (items || []).filter((_x, i) => i !== idx);
           render();
         });
@@ -699,7 +738,10 @@ export function initDashboardPage(bootstrap = {}) {
         items = arr
           .map((it) => normalizeConfigItem(it))
           .filter(Boolean)
-          .map((it) => ({ ...it, check: normalizeConfigCheckStatus(prevChecksByUrl.get(it.url) || it.check) }));
+          .map((it) => ({
+            ...it,
+            check: normalizeConfigCheckStatus(it.check || prevChecksByUrl.get(it.url) || (checkCache ? checkCache.get(it.url) : '') || ''),
+          }));
         render();
       },
       setChecksFromResults: (results = []) => {
@@ -721,6 +763,16 @@ export function initDashboardPage(bootstrap = {}) {
           changed = true;
           return { ...it, check: nextCheck };
         });
+        try {
+          if (!(checkCache instanceof Map)) checkCache = loadCheckCache();
+          statusByUrl.forEach((v, k) => {
+            const check = normalizeConfigCheckStatus(v);
+            if (!k) return;
+            if (!check || check === 'unchecked') checkCache.delete(k);
+            else checkCache.set(k, check);
+          });
+          saveCheckCache(checkCache);
+        } catch (_e) {}
         if (changed) render();
       },
     };
@@ -816,7 +868,7 @@ export function initDashboardPage(bootstrap = {}) {
           settingsResp.onlineConfigs.map((it) => ({
             name: it && typeof it.name === 'string' ? it.name : '',
             url: it && typeof it.url === 'string' ? it.url : '',
-            check: '',
+            check: it && typeof it.status === 'string' ? it.status : '',
           }))
         );
       }
