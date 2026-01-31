@@ -7,8 +7,8 @@
     <div ref="container" class="artplayer-root" />
 
     <teleport :to="teleportTarget || 'body'" :disabled="!teleportTarget">
-      <!-- Buffering ring -->
-      <div v-if="buffering" class="m-buffer-ring" aria-hidden="true"></div>
+      <div v-show="showBufferRing" class="m-buffer-mask" aria-hidden="true"></div>
+      <div v-show="showBufferRing" class="m-buffer-ring" aria-hidden="true"></div>
 
       <div class="yt-ui" :class="{ 'yt-ui--show': overlayVisible }">
 	      <div v-if="!isMobile" class="yt-bar" @click.stop @mousedown.stop @touchstart.stop>
@@ -303,7 +303,7 @@
 	import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 	import Artplayer from 'artplayer';
 
-	const emit = defineEmits(['loadedmetadata', 'error']);
+	const emit = defineEmits(['loadedmetadata', 'error', 'buffering', 'playing', 'firstframe']);
 
 const props = defineProps({
   url: { type: String, default: '' },
@@ -311,6 +311,7 @@ const props = defineProps({
   headers: { type: Object, default: () => ({}) },
   title: { type: String, default: '' },
   autoplay: { type: Boolean, default: true },
+  showBufferRing: { type: Boolean, default: false },
 });
 
 const container = ref(null);
@@ -402,6 +403,28 @@ const bufferedFrac = computed(() => {
   if (!Number.isFinite(e) || e <= 0) return 0;
   return Math.max(0, Math.min(1, e / d));
 });
+
+const setBuffering = (next) => {
+  const v = !!next;
+  if (buffering.value === v) return;
+  buffering.value = v;
+  try {
+    emit('buffering', v);
+  } catch (_e) {}
+};
+
+watch(
+  () => props.url,
+  (next, prev) => {
+    const a = typeof next === 'string' ? next.trim() : '';
+    const b = typeof prev === 'string' ? prev.trim() : '';
+    if (!a) {
+      setBuffering(false);
+      return;
+    }
+    if (a !== b) setBuffering(true);
+  }
+);
 
 let bufferUpdateRaf = 0;
 let bufferUpdatePending = 0;
@@ -515,12 +538,12 @@ const detectVideoFormat = (url) => {
 	  return await shakaModulePromise;
 	};
 
-	const destroyNow = () => {
+const destroyNow = () => {
   try {
     settingsOpen.value = false;
   } catch (_e) {}
   try {
-    buffering.value = false;
+    setBuffering(false);
   } catch (_e) {}
   try {
     if (timeUpdateRaf) window.cancelAnimationFrame(timeUpdateRaf);
@@ -732,6 +755,7 @@ const detectVideoFormat = (url) => {
           : '';
 
   let metaEmitted = false;
+  let firstFrameEmitted = false;
   const emitMetaOnce = () => {
     if (metaEmitted) return;
     metaEmitted = true;
@@ -743,17 +767,24 @@ const detectVideoFormat = (url) => {
     } catch (_e) {}
   };
 
-	  art = new Artplayer({
-	    container: container.value,
-	    url: playUrlForArt,
+  const emitFirstFrameOnce = () => {
+    if (firstFrameEmitted) return;
+    firstFrameEmitted = true;
+    try {
+      emit('firstframe');
+    } catch (_e) {}
+  };
+
+		  art = new Artplayer({
+		    container: container.value,
+		    url: playUrlForArt,
     poster: props.poster || '',
     autoplay: !!props.autoplay,
     muted: false,
     volume: 0.7,
     pip: true,
-    // iOS Safari has various rendering quirks with "backdrop" effects while decoding video.
-    // Disable it on mobile to reduce black-screen-with-audio issues.
-    backdrop: !isMobile.value,
+    // Disable ArtPlayer's backdrop (blur background) to avoid poster/backdrop flashes during init/buffering.
+    backdrop: false,
     autoSize: false,
     autoMini: false,
     setting: false,
@@ -1000,10 +1031,9 @@ const detectVideoFormat = (url) => {
 	    timeUpdateRaf = window.requestAnimationFrame(() => {
 	      timeUpdateRaf = 0;
 	      const nextTime = timeUpdatePending || 0;
-	      if (buffering.value && nextTime > (currentTime.value || 0) + 0.05) {
-	        buffering.value = false;
-	      }
+	      if (buffering.value && nextTime > (currentTime.value || 0) + 0.05) setBuffering(false);
 	      currentTime.value = nextTime;
+        if (nextTime > 0.01) emitFirstFrameOnce();
 	      scheduleBufferedSync();
 	    });
 	  });
@@ -1028,36 +1058,45 @@ const detectVideoFormat = (url) => {
   });
 	  art.on('video:play', () => {
 	    playing.value = true;
-	    buffering.value = false;
+	    setBuffering(false);
 	    showUiTemporarily();
 	    scheduleBufferedSync();
 	  });
   art.on('video:pause', () => {
     playing.value = false;
-    buffering.value = false;
+    setBuffering(false);
     uiVisible.value = true;
   });
   art.on('video:waiting', () => {
-    buffering.value = true;
+    setBuffering(true);
     showUiTemporarily();
   });
   art.on('video:stalled', () => {
-    buffering.value = true;
+    setBuffering(true);
     showUiTemporarily();
   });
-	  art.on('video:playing', () => {
-	    buffering.value = false;
-	    showUiTemporarily();
-	    emitMetaOnce();
-	    scheduleBufferedSync();
-	  });
+		  art.on('video:playing', () => {
+		    setBuffering(false);
+		    showUiTemporarily();
+		    emitMetaOnce();
+	      try {
+	        emit('playing');
+	      } catch (_e) {}
+        try {
+          const v = art && art.video ? art.video : null;
+          if (v && typeof v.requestVideoFrameCallback === 'function') {
+            v.requestVideoFrameCallback(() => emitFirstFrameOnce());
+          }
+        } catch (_e) {}
+		    scheduleBufferedSync();
+		  });
 	  art.on('video:canplay', () => {
-	    buffering.value = false;
+	    setBuffering(false);
 	    emitMetaOnce();
 	    scheduleBufferedSync();
 	  });
   art.on('video:error', () => {
-    buffering.value = false;
+    setBuffering(false);
     uiVisible.value = true;
     try {
       const v = art && art.video ? art.video : null;
@@ -1975,6 +2014,14 @@ defineExpose({ destroy: destroyNow, pause, play, tryAutoplay });
   height: 26px;
 }
 
+.tv-artplayer .m-buffer-mask {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  pointer-events: none;
+  z-index: 10000;
+}
+
 .tv-artplayer .m-buffer-ring {
   position: absolute;
   left: 50%;
@@ -2009,7 +2056,8 @@ defineExpose({ destroy: destroyNow, pause, play, tryAutoplay });
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tv-artplayer .m-buffer-ring::after {
+  .tv-artplayer .m-buffer-ring::after,
+  .tv-artplayer.tv-artplayer--mobile .m-btn--play[data-loading='true']::after {
     animation: none;
   }
 }

@@ -89,19 +89,20 @@
 	                    <div class="play-video-ratio rounded-xl overflow-hidden shadow-lg">
 	                      <div class="play-video-ratio__inner">
 		                        <ArtPlayer
-                          ref="artPlayerRef"
-		                        v-if="playerUrl"
-		                        :url="playerUrl"
-		                        :poster="displayPoster"
-		                        :headers="playerHeaders"
-		                        :title="displayTitle"
-		                        :autoplay="true"
-		                        @loadedmetadata="onPlayerLoadedMetadata"
-                          @error="onPlayerError"
-		                      />
-	                      <div v-else class="w-full h-full bg-black/10 dark:bg-white/5" aria-hidden="true"></div>
+                            ref="artPlayerRef"
+		                          :url="playerUrl"
+		                          :headers="playerHeaders"
+		                          :title="displayTitle"
+		                          :autoplay="true"
+                            :show-buffer-ring="playerPhase === 'buffering'"
+		                          @loadedmetadata="onPlayerLoadedMetadata"
+                            @buffering="onPlayerBuffering"
+                            @playing="onPlayerPlaying"
+                            @firstframe="onPlayerFirstFrame"
+                            @error="onPlayerError"
+		                        />
 	                      <div
-	                        v-if="playerPhase !== 'ready'"
+	                        v-show="playerPhase !== 'ready' && playerPhase !== 'buffering'"
 	                        class="play-player-overlay"
 	                        :class="{ 'play-player-overlay--error': playerPhase === 'error' }"
 	                      >
@@ -981,6 +982,13 @@ const exitPlay = () => {
     playerUrl.value = '';
     playerHeaders.value = {};
     playerMetaReady.value = false;
+    playerBuffering.value = false;
+    playerPlaybackStarted.value = false;
+    playerFirstFrameReady.value = false;
+    if (playerFirstFrameTimer) {
+      window.clearTimeout(playerFirstFrameTimer);
+      playerFirstFrameTimer = 0;
+    }
     window.dispatchEvent(new CustomEvent('tv:exit-play'));
   } catch (_e) {}
 };
@@ -994,6 +1002,13 @@ const resetForNewVideo = () => {
   playerUrl.value = '';
   playerHeaders.value = {};
   playerMetaReady.value = false;
+  playerBuffering.value = false;
+  playerPlaybackStarted.value = false;
+  playerFirstFrameReady.value = false;
+  if (playerFirstFrameTimer) {
+    window.clearTimeout(playerFirstFrameTimer);
+    playerFirstFrameTimer = 0;
+  }
   playLoading.value = false;
   playError.value = '';
   playerRuntimeError.value = '';
@@ -1033,6 +1048,13 @@ const resetForNewSource = () => {
   playerUrl.value = '';
   playerHeaders.value = {};
   playerMetaReady.value = false;
+  playerBuffering.value = false;
+  playerPlaybackStarted.value = false;
+  playerFirstFrameReady.value = false;
+  if (playerFirstFrameTimer) {
+    window.clearTimeout(playerFirstFrameTimer);
+    playerFirstFrameTimer = 0;
+  }
   playLoading.value = false;
   playError.value = '';
   playerRuntimeError.value = '';
@@ -1087,6 +1109,10 @@ const isFavorited = ref(false);
 const playerUrl = ref('');
 const playerHeaders = ref({});
 const playerMetaReady = ref(false);
+const playerBuffering = ref(false);
+const playerPlaybackStarted = ref(false);
+const playerFirstFrameReady = ref(false);
+let playerFirstFrameTimer = 0;
 const playingPanKey = ref('');
 const playingEpisodeIndex = ref(-1);
 const initialAutoPlayTriggered = ref(false);
@@ -2648,6 +2674,13 @@ const requestPlay = async () => {
     playerUrl.value = '';
     playerHeaders.value = {};
     playerMetaReady.value = false;
+    playerBuffering.value = false;
+    playerPlaybackStarted.value = false;
+    playerFirstFrameReady.value = false;
+    if (playerFirstFrameTimer) {
+      window.clearTimeout(playerFirstFrameTimer);
+      playerFirstFrameTimer = 0;
+    }
     try {
 		    const role = props.bootstrap && props.bootstrap.user && props.bootstrap.user.role ? String(props.bootstrap.user.role) : '';
 		    const userBase = props.bootstrap?.settings?.userCatPawOpenApiBase || '';
@@ -2747,6 +2780,13 @@ const requestPlay = async () => {
       }
         if (seqAtCall !== playRequestState.seq) return;
 		    playerMetaReady.value = false;
+        playerBuffering.value = false;
+        playerPlaybackStarted.value = false;
+        playerFirstFrameReady.value = false;
+        if (playerFirstFrameTimer) {
+          window.clearTimeout(playerFirstFrameTimer);
+          playerFirstFrameTimer = 0;
+        }
 		    playerUrl.value = finalUrl;
 		    playerHeaders.value = finalHeaders;
 		    playingPanKey.value = panKeyAtCall;
@@ -2806,6 +2846,25 @@ const onPlayerLoadedMetadata = () => {
   playerMetaReady.value = true;
 };
 
+const onPlayerBuffering = (v) => {
+  playerBuffering.value = !!v;
+};
+
+const onPlayerPlaying = () => {
+  playerPlaybackStarted.value = true;
+  playerBuffering.value = false;
+};
+
+const onPlayerFirstFrame = () => {
+  if (playerFirstFrameReady.value) return;
+  if (playerFirstFrameTimer) return;
+  // Delay unmasking slightly to avoid 1-frame compositor flashes on some browsers/devices.
+  playerFirstFrameTimer = window.setTimeout(() => {
+    playerFirstFrameTimer = 0;
+    playerFirstFrameReady.value = true;
+  }, 120);
+};
+
 const onPlayerError = (e) => {
   try {
     const msg = e && e.message ? String(e.message) : '';
@@ -2816,18 +2875,26 @@ const onPlayerError = (e) => {
 };
 
 const playerPhase = computed(() => {
-  if (playLoading.value) return 'play_url';
   if (playError.value) return 'error';
   if (playerRuntimeError.value) return 'error';
   if (introLoading.value) return 'detail';
   if (introError.value && !playerUrl.value) return 'error';
-  if (playerUrl.value && !playerMetaReady.value) return 'play_info';
-  if (playerUrl.value && playerMetaReady.value) return 'ready';
-  return 'idle';
+  if (!playerUrl.value) {
+    if (playLoading.value) return 'play_url';
+    return 'idle';
+  }
+  if (!playerMetaReady.value) return 'play_info';
+  if (playerBuffering.value) return 'buffering';
+  if (!playerPlaybackStarted.value || !playerFirstFrameReady.value) return 'buffering';
+  return 'ready';
 });
 
 const playerPhaseLoading = computed(() => {
-  return playerPhase.value === 'detail' || playerPhase.value === 'play_url' || playerPhase.value === 'play_info';
+  return (
+    playerPhase.value === 'detail' ||
+    playerPhase.value === 'play_url' ||
+    playerPhase.value === 'play_info'
+  );
 });
 
 const playerPhaseText = computed(() => {
@@ -2835,9 +2902,11 @@ const playerPhaseText = computed(() => {
     case 'detail':
       return '视频加载中...';
     case 'play_url':
-      return '获取播放地址...';
+      return '正在获取播放地址...';
     case 'play_info':
-      return '获取播放信息...';
+      return '正在获取播放信息...';
+    case 'buffering':
+      return '';
     case 'error':
       return playerRuntimeError.value || playError.value || introError.value || '请求失败';
     case 'idle':
@@ -2850,7 +2919,7 @@ const playerPhaseText = computed(() => {
 const playerStageItems = [
   { key: 'detail', label: '信息' },
   { key: 'play_url', label: '地址' },
-  { key: 'play_info', label: '就绪' },
+  { key: 'play_info', label: '信息' },
 ];
 
 // 0..3 (3 means all done)
@@ -2862,12 +2931,15 @@ const playerStageIndex = computed(() => {
       return 1;
     case 'play_info':
       return 2;
+    case 'buffering':
+      return 3;
     case 'ready':
       return 3;
     case 'error': {
+      if (playerUrl.value && playerPlaybackStarted.value) return 3;
       if (playerUrl.value && playerMetaReady.value) return 3;
       if (playerUrl.value && !playerMetaReady.value) return 2;
-      if (playLoading.value) return 1;
+      if (!playerUrl.value && playLoading.value) return 1;
       if (introLoading.value) return 0;
       return 0;
     }
@@ -4548,13 +4620,10 @@ watch(
   align-items: center;
   justify-content: center;
   pointer-events: none;
+  z-index: 10010;
   padding: 18px;
-  background:
-    radial-gradient(900px 520px at 65% 35%, rgba(99, 102, 241, 0.18), rgba(0, 0, 0, 0) 60%),
-    radial-gradient(820px 480px at 25% 30%, rgba(14, 165, 233, 0.18), rgba(0, 0, 0, 0) 58%),
-    radial-gradient(900px 520px at 40% 75%, rgba(34, 197, 94, 0.12), rgba(0, 0, 0, 0) 62%),
-    linear-gradient(180deg, rgba(2, 6, 23, 0.72), rgba(2, 6, 23, 0.42));
-  backdrop-filter: blur(10px);
+  background: rgb(2, 6, 23);
+  backdrop-filter: none;
 }
 
 .play-player-overlay__panel {
