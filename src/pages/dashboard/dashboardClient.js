@@ -93,6 +93,20 @@ export function initDashboardPage(bootstrap = {}) {
   let catPawOpenConfigListEditor = null;
   let catPawOpenSavedApiBaseNorm = '';
 
+  const normalizeTvUser = (value) => {
+    const raw = value != null ? String(value) : '';
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+    // Prevent header injection and keep a single-line header value.
+    return trimmed.replace(/[\r\n]+/g, '');
+  };
+
+  const resolveTvUser = () => {
+    const user = bootstrap && typeof bootstrap === 'object' ? bootstrap.user : null;
+    const username = user && typeof user === 'object' ? user.username : '';
+    return normalizeTvUser(username);
+  };
+
   const createEl = (tag, options = {}) => {
     const el = document.createElement(tag);
     const className = options.className != null ? String(options.className) : '';
@@ -780,7 +794,11 @@ export function initDashboardPage(bootstrap = {}) {
     return api;
   };
 
-  const getTvUserHeaders = () => ({});
+  const getTvUserHeaders = () => {
+    const tvUser = resolveTvUser();
+    if (!tvUser) return {};
+    return { 'X-TV-User': tvUser };
+  };
 
   const requestCatPawOpenAdminJson = async ({ apiBase, path, method, body, timeoutMs }) => {
     const base = normalizeCatPawOpenAdminBase(apiBase);
@@ -1268,7 +1286,7 @@ export function initDashboardPage(bootstrap = {}) {
     { key: 'baidu', name: '百度', type: 'cookie' },
     { key: 'quark', name: '夸克', type: 'cookie' },
     { key: 'tianyi', name: '天翼', type: 'account' },
-    { key: 'yidong', name: '移动', type: 'authorization' },
+    { key: '139', name: '移动', type: 'authorization' },
     { key: 'uc', name: 'UC', type: 'cookie' },
     { key: 'pan123', name: '123', type: 'account' },
     { key: '115', name: '115', type: 'cookie' },
@@ -1775,11 +1793,35 @@ export function initDashboardPage(bootstrap = {}) {
     if (!entries.length) return { ok: true, skipped: false, okCount: 0, failCount: 0 };
 
     try {
+      const typeByKey = new Map();
+      panSettingDefs.forEach((def) => {
+        if (def && def.key && def.type) typeByKey.set(def.key, def.type);
+      });
+      const pans = {};
+      entries.forEach(([k, v]) => {
+        const key = typeof k === 'string' ? k.trim() : '';
+        if (!key) return;
+        const typ = typeByKey.get(key);
+        const remoteKey = key;
+        const cur = v && typeof v === 'object' ? v : {};
+        // CatPawOpen `/admin/pan/sync` only accepts {cookie} or {username,password}.
+        // For "authorization" types, send it as a cookie-equivalent value.
+        const payload = {};
+        if (typ === 'account') {
+          if (typeof cur.username === 'string') payload.username = cur.username;
+          if (typeof cur.password === 'string') payload.password = cur.password;
+        } else if (typ === 'authorization') {
+          if (typeof cur.authorization === 'string') payload.authorization = cur.authorization;
+        } else {
+          if (typeof cur.cookie === 'string') payload.cookie = cur.cookie;
+        }
+        pans[remoteKey] = payload;
+      });
       const resp = await requestCatPawOpenAdminJson({
         apiBase: normalizedBase,
         path: 'admin/pan/sync',
         method: 'POST',
-        body: { pans: store },
+        body: { pans },
       });
       const okCount = resp && typeof resp.okCount === 'number' ? resp.okCount : 0;
       const failCount = resp && typeof resp.failCount === 'number' ? resp.failCount : 0;
@@ -2632,6 +2674,7 @@ export function initDashboardPage(bootstrap = {}) {
   const videoSourceHeaderSort = document.getElementById('videoSourceHeaderSort');
   const videoSourceHeaderError = document.getElementById('videoSourceHeaderError');
   const videoSourceHeaderCheckbox = document.getElementById('videoSourceHeaderCheckbox');
+  const videoSourceResetOrder = document.getElementById('videoSourceResetOrder');
   const videoSourceBulkCheckDisable = document.getElementById('videoSourceBulkCheckDisable');
 
   const formatVideoSourceApi = (api) => {
@@ -2983,6 +3026,75 @@ export function initDashboardPage(bootstrap = {}) {
     return { ok: false, message: (data && data.message) || '保存失败' };
   };
 
+  const resetVideoSourceOrderFromCatPawOpen = async () => {
+    const apiBase = await resolveCatPawOpenApiBase();
+    const normalizedBase = normalizeCatPawOpenAdminBase(apiBase);
+    if (!normalizedBase) {
+      setVideoSourceListStatus('error', 'CatPawOpen 接口地址未设置');
+      return;
+    }
+
+    setVideoSourceListStatus('', '对齐中...');
+    try {
+      const fullConfig = await requestCatPawOpenAdminJson({
+        apiBase: normalizedBase,
+        path: 'admin/full-config',
+        method: 'GET',
+      });
+      const remote = fullConfig && fullConfig.video && Array.isArray(fullConfig.video.sites) ? fullConfig.video.sites : [];
+      const remoteOrderKeys = remote
+        .map((s) => (s && typeof s.key === 'string' ? s.key.trim() : ''))
+        .filter(Boolean);
+      if (!remoteOrderKeys.length) {
+        setVideoSourceListStatus('error', '未获取到排序');
+        return;
+      }
+
+      const byKey = new Map();
+      (currentVideoSourceSites || []).forEach((s) => {
+        if (s && s.key) byKey.set(s.key, s);
+      });
+
+      const used = new Set();
+      const nextSites = [];
+      for (let i = 0; i < remoteOrderKeys.length; i += 1) {
+        const k = remoteOrderKeys[i];
+        if (!k || used.has(k)) continue;
+        const s = byKey.get(k);
+        if (!s) continue;
+        used.add(k);
+        nextSites.push(s);
+      }
+      // Append any local-only sites at the end, keeping their existing relative order.
+      (currentVideoSourceSites || []).forEach((s) => {
+        const k = s && s.key ? String(s.key) : '';
+        if (!k || used.has(k)) return;
+        used.add(k);
+        nextSites.push(s);
+      });
+
+      if (!nextSites.length) {
+        setVideoSourceListStatus('error', '未获取到站源');
+        return;
+      }
+
+      const saved = await saveVideoSourceOrder(nextSites);
+      if (!saved || !saved.ok) {
+        setVideoSourceListStatus('error', (saved && saved.message) || '保存失败');
+        return;
+      }
+
+      renderVideoSourceList(nextSites);
+      setVideoSourceListStatus('success', '排序已对齐');
+      clearStatusLater(setVideoSourceListStatus, 1200);
+    } catch (e) {
+      const status = e && typeof e.status === 'number' ? e.status : 0;
+      const msg = e && e.message ? String(e.message) : '对齐失败';
+      if (status) setVideoSourceListStatus('error', `HTTP ${status}：${msg}`);
+      else setVideoSourceListStatus('error', msg);
+    }
+  };
+
   const checkVideoSourceSites = async (keys) => {
     const apiBase = await resolveCatPawOpenApiBase();
     const normalizedBase = normalizeCatPawOpenAdminBase(apiBase);
@@ -3090,44 +3202,72 @@ export function initDashboardPage(bootstrap = {}) {
       return s.trim();
     };
 
-    const isMyPanSite = (site) => {
-      const nameRaw = site && typeof site.name === 'string' ? site.name : '';
-      const name = normalizeSiteNameForMatch(nameRaw);
-      if (!name) return false;
-      if (!name.includes('我的')) return false;
-      const keys = ['夸克', '百度', '天逸', '115', '123', 'quark', 'baidu'];
-      const lower = name.toLowerCase();
-      return keys.some((k) => (/[a-z]/i.test(k) ? lower.includes(k) : name.includes(k)));
-    };
+	    const isMyPanSite = (site) => {
+	      const nameRaw = site && typeof site.name === 'string' ? site.name : '';
+	      const name = normalizeSiteNameForMatch(nameRaw);
+	      if (!name) return false;
+	      if (!name.includes('我的')) return false;
+	      const keys = ['夸克', '百度', '天逸', '115', '123', 'quark', 'baidu'];
+	      const lower = name.toLowerCase();
+	      return keys.some((k) => (/[a-z]/i.test(k) ? lower.includes(k) : name.includes(k)));
+	    };
 
-    for (let i = 0; i < uniq.length; i += 1) {
-      const key = uniq[i];
-      const site = byKey.get(key);
-      if (!site || !site.api) {
-        results[key] = 'invalid';
-        errors[key] = '分类接口:站点配置无效';
-        continue;
-      }
-      try {
-        const spiderName = extractSpiderNameFromApi(site.api);
-        if (spiderName === 'baseset') {
-          // `baseset` is the CatPawOpen settings site; treat it as always available.
-          // Do not probe CatPawOpen here to avoid disabling a non-content source.
-          results[key] = 'valid';
-          continue;
-        }
-        if (isMyPanSite(site)) {
-          // "我的xxx" pan browsing sources depend on user storage and may not be probe-able here.
-          results[key] = 'valid';
-          disableSearchKeys.push(key);
-          continue;
-        }
-        const spiderPath = String(site.api || '').trim().replace(/\/+$/, '').replace(/^\//, '');
+	    const isConfigCenterSite = (site) => {
+	      const nameRaw = site && typeof site.name === 'string' ? site.name : '';
+	      const name = normalizeSiteNameForMatch(nameRaw);
+	      if (!name || !name.includes('配置中心')) return false;
+	      const api = site && typeof site.api === 'string' ? site.api.trim() : '';
+	      if (!api) return false;
+	      return /\/spider\/baseset(?:\/|$)/.test(api);
+	    };
 
-        const isFatalHttpProbeError = (err) => {
-          const status = err && typeof err.status === 'number' ? err.status : 0;
-          const msg = err && err.message ? String(err.message) : '';
-          if (status === 403 || status === 404) return true;
+	    for (let i = 0; i < uniq.length; i += 1) {
+	      const key = uniq[i];
+	      const site = byKey.get(key);
+	      if (!site || !site.api) {
+	        results[key] = 'invalid';
+	        errors[key] = '分类接口:站点配置无效';
+	        continue;
+	      }
+	      try {
+	        const apiRaw = String(site.api || '').trim();
+	        const spiderPath = apiRaw.replace(/\/+$/, '').replace(/^\//, '');
+
+	        if (isConfigCenterSite(site)) {
+	          // Config center sites are not content sources; only verify the route is reachable.
+	          let ok = false;
+	          let err = '';
+	          try {
+	            ok = await fetchCatPawOpenStatus({ apiBase: normalizedBase, path: spiderPath });
+	          } catch (e) {
+	            err = formatHttpError(e);
+	          }
+	          if (ok) {
+	            results[key] = 'valid';
+	          } else {
+	            results[key] = 'invalid';
+	            errors[key] = `配置中心:${err || '无法访问'}`;
+	          }
+	          continue;
+	        }
+
+	        const spiderName = extractSpiderNameFromApi(site.api);
+	        if (spiderName === 'baseset') {
+	          // `baseset` is a non-content settings site; keep it enabled and avoid full probing here.
+	          results[key] = 'valid';
+	          continue;
+	        }
+	        if (isMyPanSite(site)) {
+	          // "我的xxx" pan browsing sources depend on user storage and may not be probe-able here.
+	          results[key] = 'valid';
+	          disableSearchKeys.push(key);
+	          continue;
+	        }
+
+	        const isFatalHttpProbeError = (err) => {
+	          const status = err && typeof err.status === 'number' ? err.status : 0;
+	          const msg = err && err.message ? String(err.message) : '';
+	          if (status === 403 || status === 404) return true;
           if (status === 500 && /ECONNREFUSED/i.test(msg)) return true;
           return false;
         };
@@ -3166,22 +3306,36 @@ export function initDashboardPage(bootstrap = {}) {
           return parsePlayCandidate(from, url);
         };
 
-        const extractPlayUrl = (resp) => {
-          if (!resp) return '';
-          const pick = (v) => (typeof v === 'string' ? v.trim() : '');
-          return pick(resp.url) || pick(resp.playUrl) || (resp.data && pick(resp.data.url)) || '';
-        };
+	        const extractPlayUrl = (resp) => {
+	          if (!resp) return '';
+	          const pickStr = (v) => (typeof v === 'string' ? v.trim() : '');
+	          const pickUrlLike = (v) => {
+	            const direct = pickStr(v);
+	            if (direct) return direct;
+	            if (!Array.isArray(v)) return '';
+	            // CatPawOpen may return `url: ["原画", "https://..."]` (or other array shapes).
+	            // Prefer an http(s) URL, starting from the end.
+	            for (let i = v.length - 1; i >= 0; i -= 1) {
+	              const s = pickStr(v[i]);
+	              if (s && /^https?:\/\//i.test(s)) return s;
+	            }
+	            for (let i = 0; i < v.length; i += 1) {
+	              const s = pickStr(v[i]);
+	              if (s) return s;
+	            }
+	            return '';
+	          };
+	          return pickUrlLike(resp.url) || pickUrlLike(resp.playUrl) || (resp.data && pickUrlLike(resp.data.url)) || '';
+	        };
 
-        // 1) Home probe
-        let homeOk = false;
-        let homeErr = '';
-        let homeClasses = [];
-        let homeHasClasses = false;
-        let homeHasList = false;
-        try {
-          const homeResp = await requestCatPawOpenAdminJson({
-            apiBase: normalizedBase,
-            path: `${spiderPath}/home`,
+	        // 1) Home probe
+	        let homeOk = false;
+	        let homeErr = '';
+	        let homeClasses = [];
+	        try {
+	          const homeResp = await requestCatPawOpenAdminJson({
+	            apiBase: normalizedBase,
+	            path: `${spiderPath}/home`,
             method: 'POST',
             body: {},
           });
@@ -3189,21 +3343,13 @@ export function initDashboardPage(bootstrap = {}) {
           if (sc >= 400) {
             const msg = normalizeMessage(homeResp) || '请求失败';
             homeErr = msg.startsWith('HTTP') ? msg : `HTTP ${sc}：${msg}`;
-          } else {
-            homeOk = true;
-            homeClasses = extractClasses(homeResp);
-            homeHasClasses = Array.isArray(homeClasses) && homeClasses.some((c) => !!extractClassId(c));
-            const homeList = extractList(homeResp);
-            homeHasList = Array.isArray(homeList) && homeList.length > 0;
-          }
-        } catch (e) {
-          homeErr = formatHttpError(e);
-          if (isFatalHttpProbeError(e)) {
-            results[key] = 'invalid';
-            errors[key] = `首页接口:${homeErr}`;
-            continue;
-          }
-        }
+	          } else {
+	            homeOk = true;
+	            homeClasses = extractClasses(homeResp);
+	          }
+	        } catch (e) {
+	          homeErr = formatHttpError(e);
+	        }
 
         // 2) Category probe (collect candidates)
         let categoryOk = false;
@@ -3231,151 +3377,117 @@ export function initDashboardPage(bootstrap = {}) {
               vodCandidates = Array.isArray(list) ? list.slice(0, 10) : [];
               categoryEmpty = vodCandidates.length === 0;
             }
-          } catch (e) {
-            categoryErr = formatHttpError(e);
-            if (isFatalHttpProbeError(e)) {
-              results[key] = 'invalid';
-              errors[key] = `分类接口:${categoryErr}`;
-              continue;
-            }
-          }
-        }
+	          } catch (e) {
+	            categoryErr = formatHttpError(e);
+	          }
+	        }
 
-	        // 3) Play probe (up to 3 candidates)
-	        let playOk = false;
+	        // 3) Play probe (use category candidates; up to 3)
 	        let playOkFromCategory = false;
 	        let playOkFromSearch = false;
 	        let playErr = '';
+
+	        const tryPlayFromCandidates = async (items) => {
+	          const candidates = (Array.isArray(items) ? items : [])
+	            .filter((v) => v && typeof v === 'object')
+	            .slice(0, 3);
+	          for (let j = 0; j < candidates.length; j += 1) {
+	            const vod = candidates[j];
+	            let playCandidate = extractPlayFromVod(vod);
+	            try {
+	              if (!playCandidate) {
+	                const vodId = extractVodId(vod);
+	                if (!vodId) continue;
+	                const detailResp = await requestCatPawOpenAdminJson({
+	                  apiBase: normalizedBase,
+	                  path: `${spiderPath}/detail`,
+	                  method: 'POST',
+	                  body: { id: vodId, vod_id: vodId },
+	                });
+	                const dsc = normalizeStatusCode(detailResp);
+	                if (dsc >= 400) continue;
+	                const detailList = extractList(detailResp);
+	                const first = Array.isArray(detailList) && detailList.length ? detailList[0] : null;
+	                playCandidate = extractPlayFromVod(first);
+	              }
+	              if (!playCandidate) continue;
+	              const playResp = await requestCatPawOpenAdminJson({
+	                apiBase: normalizedBase,
+	                path: `play`,
+	                method: 'POST',
+	                body: {
+	                  flag: playCandidate.flag,
+	                  id: playCandidate.id,
+	                  siteApi: `/${spiderPath}`.replace(/\/{2,}/g, '/'),
+	                },
+	              });
+	              const psc = normalizeStatusCode(playResp);
+	              if (psc >= 400) continue;
+	              const url = extractPlayUrl(playResp);
+	              if (url) return true;
+	              playErr = '未提取到地址';
+	            } catch (e) {
+	              playErr = formatHttpError(e);
+	              if (isFatalHttpProbeError(e)) break;
+	            }
+	          }
+	          return false;
+	        };
+
 	        if (categoryOk && !categoryEmpty) {
-	          const candidates = vodCandidates.filter((v) => v && typeof v === 'object').slice(0, 3);
-	          for (let j = 0; j < candidates.length; j += 1) {
-	            const vod = candidates[j];
-            let playCandidate = extractPlayFromVod(vod);
-            try {
-              if (!playCandidate) {
-                const vodId = extractVodId(vod);
-                if (!vodId) continue;
-                const detailResp = await requestCatPawOpenAdminJson({
-                  apiBase: normalizedBase,
-                  path: `${spiderPath}/detail`,
-                  method: 'POST',
-                  body: { id: vodId, vod_id: vodId },
-                });
-                const dsc = normalizeStatusCode(detailResp);
-                if (dsc >= 400) continue;
-                const detailList = extractList(detailResp);
-                const first = Array.isArray(detailList) && detailList.length ? detailList[0] : null;
-                playCandidate = extractPlayFromVod(first);
-              }
-	              if (!playCandidate) continue;
-	              const playResp = await requestCatPawOpenAdminJson({
-	                apiBase: normalizedBase,
-	                path: `play`,
-	                method: 'POST',
-	                body: { flag: playCandidate.flag, id: playCandidate.id, siteApi: `/${spiderPath}`.replace(/\/{2,}/g, '/') },
-	              });
-	              const psc = normalizeStatusCode(playResp);
-	              if (psc >= 400) continue;
-	              const url = extractPlayUrl(playResp);
-	              if (url) {
-	                playOk = true;
-	                playOkFromCategory = true;
-	                break;
-	              }
-	              playErr = '未提取到地址';
-	            } catch (e) {
-	              playErr = formatHttpError(e);
-              if (isFatalHttpProbeError(e)) break;
-            }
-          }
-        }
+	          playOkFromCategory = await tryPlayFromCandidates(vodCandidates);
+	        }
 
-        // 4) Search probe (only when needed)
-        let searchOk = false;
-        let searchErr = '';
-        let searchCandidates = [];
-        const needsSearchProbe = !playOk && (!homeOk || !categoryOk || categoryEmpty || (!homeHasClasses && !homeHasList));
-        if (!needsSearchProbe && playOk) {
-          searchOk = true;
-        } else {
-          try {
-            const searchResp = await requestCatPawOpenAdminJson({
-              apiBase: normalizedBase,
-              path: `${spiderPath}/search`,
-              method: 'POST',
-              body: { wd: '斗破', page: 1 },
-            });
-            const sc = normalizeStatusCode(searchResp);
-            if (sc >= 400) {
-              const msg = normalizeMessage(searchResp) || '请求失败';
-              searchErr = msg.startsWith('HTTP') ? msg : `HTTP ${sc}：${msg}`;
-            } else {
-              searchCandidates = extractList(searchResp);
-              searchOk = true;
-            }
-          } catch (e) {
-            searchErr = formatHttpError(e);
-            if (isFatalHttpProbeError(e)) searchOk = false;
-          }
-        }
+	        // 4) Search probe
+	        // - If category failed/empty => use search to find candidates, then play them.
+	        // - If category+play ok => lastly test search endpoint (no need to play from search).
+	        let searchOk = false;
+	        let searchErr = '';
+	        let searchCandidates = [];
+	        const shouldUseSearchForPlay = !categoryOk || categoryEmpty;
+	        const shouldProbeSearchFinally = playOkFromCategory;
+	        if (shouldUseSearchForPlay || shouldProbeSearchFinally) {
+	          try {
+	            const searchResp = await requestCatPawOpenAdminJson({
+	              apiBase: normalizedBase,
+	              path: `${spiderPath}/search`,
+	              method: 'POST',
+	              body: { wd: '斗破', page: 1 },
+	            });
+	            const sc = normalizeStatusCode(searchResp);
+	            if (sc >= 400) {
+	              const msg = normalizeMessage(searchResp) || '请求失败';
+	              searchErr = msg.startsWith('HTTP') ? msg : `HTTP ${sc}：${msg}`;
+	            } else {
+	              searchCandidates = extractList(searchResp);
+	              searchOk = true;
+	            }
+	          } catch (e) {
+	            searchErr = formatHttpError(e);
+	            if (isFatalHttpProbeError(e)) searchOk = false;
+	          }
+	        }
 
-        // If category didn't yield a playable item, verify play using search results (up to 3).
-	        if (!playOk && searchOk && Array.isArray(searchCandidates) && searchCandidates.length) {
-	          const candidates = searchCandidates.filter((v) => v && typeof v === 'object').slice(0, 3);
-	          for (let j = 0; j < candidates.length; j += 1) {
-	            const vod = candidates[j];
-            let playCandidate = extractPlayFromVod(vod);
-            try {
-              if (!playCandidate) {
-                const vodId = extractVodId(vod);
-                if (!vodId) continue;
-                const detailResp = await requestCatPawOpenAdminJson({
-                  apiBase: normalizedBase,
-                  path: `${spiderPath}/detail`,
-                  method: 'POST',
-                  body: { id: vodId, vod_id: vodId },
-                });
-                const dsc = normalizeStatusCode(detailResp);
-                if (dsc >= 400) continue;
-                const detailList = extractList(detailResp);
-                const first = Array.isArray(detailList) && detailList.length ? detailList[0] : null;
-                playCandidate = extractPlayFromVod(first);
-              }
-	              if (!playCandidate) continue;
-	              const playResp = await requestCatPawOpenAdminJson({
-	                apiBase: normalizedBase,
-	                path: `play`,
-	                method: 'POST',
-	                body: { flag: playCandidate.flag, id: playCandidate.id, siteApi: `/${spiderPath}`.replace(/\/{2,}/g, '/') },
-	              });
-	              const psc = normalizeStatusCode(playResp);
-	              if (psc >= 400) continue;
-	              const url = extractPlayUrl(playResp);
-	              if (url) {
-	                playOk = true;
-	                playOkFromSearch = true;
-	                break;
-	              }
-	              playErr = '未提取到地址';
-	            } catch (e) {
-	              playErr = formatHttpError(e);
-              if (isFatalHttpProbeError(e)) break;
-            }
-          }
-        }
+	        if (shouldUseSearchForPlay && searchOk && Array.isArray(searchCandidates) && searchCandidates.length) {
+	          playOkFromSearch = await tryPlayFromCandidates(searchCandidates);
+	        }
 
 	        // Final decision.
-	        // - If category flow yields a playable item => valid
-	        // - If only search flow yields a playable item => category_error (disable homepage but keep search)
+	        // - Category flow yields playable => valid (and optionally mark search_error when search probe fails)
+	        // - Category failed/empty but search play yields playable => category_error (disable homepage but keep search)
 	        // - Otherwise => invalid
-	        if (playOkFromCategory) results[key] = 'valid';
-	        else if (playOkFromSearch) results[key] = 'category_error';
-	        else results[key] = 'invalid';
+	        if (playOkFromCategory) {
+	          results[key] = searchOk ? 'valid' : 'search_error';
+	        } else if (playOkFromSearch) {
+	          results[key] = 'category_error';
+	        } else {
+	          results[key] = 'invalid';
+	        }
 
-        const parts = [];
-        if (homeErr) parts.push(`首页接口:${homeErr}`);
-        if (categoryErr) parts.push(`分类接口:${categoryErr}`);
-        if (playErr) parts.push(`播放接口:${playErr}`);
+	        const parts = [];
+	        if (homeErr) parts.push(`首页接口:${homeErr}`);
+	        if (categoryErr) parts.push(`分类接口:${categoryErr}`);
+	        if (playErr) parts.push(`播放接口:${playErr}`);
         if (searchErr) parts.push(`搜索接口:${searchErr}`);
         if (parts.length) errors[key] = parts.join('  ');
       } catch (_e) {
@@ -3506,6 +3618,20 @@ export function initDashboardPage(bootstrap = {}) {
       if (videoSourceBulkDisable) videoSourceBulkDisable.disabled = false;
     }
   };
+
+  if (videoSourceResetOrder) {
+    videoSourceResetOrder.addEventListener('click', async (e) => {
+      e.preventDefault();
+      await withDatasetLock(videoSourceResetOrder, 'pending', async () => {
+        videoSourceResetOrder.disabled = true;
+        try {
+          await resetVideoSourceOrderFromCatPawOpen();
+        } finally {
+          videoSourceResetOrder.disabled = false;
+        }
+      });
+    });
+  }
 
   if (videoSourceBulkCheckDisable) {
     videoSourceBulkCheckDisable.addEventListener('click', (e) => {

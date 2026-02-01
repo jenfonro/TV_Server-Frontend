@@ -27,7 +27,12 @@
         {{ loading ? '登录中...' : '登录' }}
       </button>
     </form>
-    <div class="footer"><span>{{ appVersion }}</span> 已是最新</div>
+    <div class="footer">
+      <div class="min-w-0 flex flex-col items-center gap-0.5">
+        <div class="text-xs text-gray-500 truncate">后端 {{ backendCommit }}</div>
+        <div class="text-xs text-gray-500 truncate">前端 {{ frontendCommit }}</div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -39,8 +44,12 @@ const props = defineProps({
   bootstrap: { type: Object, required: true },
 });
 
-const appVersion =
-  (typeof window !== 'undefined' && window.__MEOWFILM_VERSION__) || 'beta';
+	const appVersion =
+	  (typeof window !== 'undefined' && window.__MEOWFILM_VERSION__) || 'beta';
+	const backendCommit =
+	  (typeof window !== 'undefined' && window.__MEOWFILM_BACKEND_COMMIT__) || appVersion;
+	const frontendCommit =
+	  (typeof window !== 'undefined' && window.__MEOWFILM_FRONTEND_COMMIT__) || appVersion;
 
 const username = ref('');
 const password = ref('');

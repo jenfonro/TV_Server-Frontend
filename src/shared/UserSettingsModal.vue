@@ -814,20 +814,44 @@ const save = async () => {
       }
     }
 
-		    // Shared users: sync admin-managed pan credentials to the user's CatPawOpen (client-side).
-		    if (userRole.value === 'shared' && savedCatApiBase.value) {
-		      const cookieSyncErrors = [];
-		      try {
-		        const data2 = await apiGetJson('/api/user/pan-login-settings', { cacheMs: 0 });
-		        if (!data2 || data2.success !== true) throw new Error((data2 && data2.message) || '读取失败');
-		        const store = data2.settings && typeof data2.settings === 'object' ? data2.settings : {};
-		        await requestCatWebsiteJson('admin/pan/sync', {
-		          method: 'POST',
-		          body: JSON.stringify({ pans: store }),
-		        });
-		      } catch (e) {
-		        cookieSyncErrors.push(`读取后台 Cookie 配置失败：${(e && e.message) || '未知错误'}`);
-		      }
+			    // Shared users: sync admin-managed pan credentials to the user's CatPawOpen (client-side).
+			    if (userRole.value === 'shared' && savedCatApiBase.value) {
+			      const cookieSyncErrors = [];
+			      try {
+			        const data2 = await apiGetJson('/api/user/pan-login-settings', { cacheMs: 0 });
+			        if (!data2 || data2.success !== true) throw new Error((data2 && data2.message) || '读取失败');
+			        const store = data2.settings && typeof data2.settings === 'object' ? data2.settings : {};
+			        const typeByKey = new Map();
+			        PAN_LOGIN_ITEMS.forEach((it) => {
+			          if (it && it.key && it.type) typeByKey.set(it.key, it.type);
+			        });
+			        const pans = {};
+			        Object.entries(store).forEach(([k, v]) => {
+			          const key = typeof k === 'string' ? k.trim() : '';
+			          if (!key) return;
+			          const cur = v && typeof v === 'object' ? v : {};
+			          const remoteKey = key;
+			          const typ = typeByKey.get(key);
+			          // CatPawOpen `/admin/pan/sync` only accepts {cookie} or {username,password}.
+			          // For "authorization" types, send it as a cookie-equivalent value.
+			          const payload = {};
+			          if (typ === 'account') {
+			            if (typeof cur.username === 'string') payload.username = cur.username;
+			            if (typeof cur.password === 'string') payload.password = cur.password;
+			          } else if (typ === 'authorization') {
+			            if (typeof cur.authorization === 'string') payload.authorization = cur.authorization;
+			          } else {
+			            if (typeof cur.cookie === 'string') payload.cookie = cur.cookie;
+			          }
+			          pans[remoteKey] = payload;
+			        });
+			        await requestCatWebsiteJson('admin/pan/sync', {
+			          method: 'POST',
+			          body: JSON.stringify({ pans }),
+			        });
+			      } catch (e) {
+			        cookieSyncErrors.push(`读取后台 Cookie 配置失败：${(e && e.message) || '未知错误'}`);
+			      }
 		      if (cookieSyncErrors.length > 0) {
 		        msgKind.value = 'success';
         msg.value = `保存成功，但 Cookie 同步失败：${cookieSyncErrors.slice(0, 3).join('；')}${cookieSyncErrors.length > 3 ? `…（共 ${cookieSyncErrors.length} 项）` : ''}`;

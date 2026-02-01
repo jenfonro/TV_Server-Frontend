@@ -234,28 +234,37 @@
 	            </button>
 	            <div id="videoSourceSitesPanel" class="tv-us-acc-body hidden">
 	              <div class="flex items-center justify-between gap-3 mb-2">
-	                <div id="videoSourceBulkActions" class="hidden flex items-center gap-2">
+	                <div class="flex items-center gap-2">
 	                  <button
-	                    id="videoSourceBulkCheckDisable"
+	                    id="videoSourceResetOrder"
 	                    type="button"
 	                    class="px-2 py-1 rounded-full border border-gray-400 text-xs font-medium text-gray-700 hover:bg-gray-500/10 dark:border-white/20 dark:text-gray-100 dark:hover:bg-white/10 transition-colors duration-150"
 	                  >
-	                    检测并禁用失效源
+	                    重置排序
 	                  </button>
-	                  <button
-	                    id="videoSourceBulkEnable"
-	                    type="button"
-	                    class="px-2 py-1 rounded-full border border-green-500 text-xs font-medium text-green-600 hover:bg-green-500/10 transition-colors duration-150"
-	                  >
-	                    批量启用
-	                  </button>
-	                  <button
-	                    id="videoSourceBulkDisable"
-	                    type="button"
-	                    class="px-2 py-1 rounded-full border border-red-500 text-xs font-medium text-red-600 hover:bg-red-500/10 transition-colors duration-150"
-	                  >
-	                    批量禁用
-	                  </button>
+	                  <div id="videoSourceBulkActions" class="hidden flex items-center gap-2">
+	                    <button
+	                      id="videoSourceBulkCheckDisable"
+	                      type="button"
+	                      class="px-2 py-1 rounded-full border border-gray-400 text-xs font-medium text-gray-700 hover:bg-gray-500/10 dark:border-white/20 dark:text-gray-100 dark:hover:bg-white/10 transition-colors duration-150"
+	                    >
+	                      检测并禁用失效源
+	                    </button>
+	                    <button
+	                      id="videoSourceBulkEnable"
+	                      type="button"
+	                      class="px-2 py-1 rounded-full border border-green-500 text-xs font-medium text-green-600 hover:bg-green-500/10 transition-colors duration-150"
+	                    >
+	                      批量启用
+	                    </button>
+	                    <button
+	                      id="videoSourceBulkDisable"
+	                      type="button"
+	                      class="px-2 py-1 rounded-full border border-red-500 text-xs font-medium text-red-600 hover:bg-red-500/10 transition-colors duration-150"
+	                    >
+	                      批量禁用
+	                    </button>
+	                  </div>
 	                </div>
 	                <div
 	                  id="videoSourceListSaveStatus"

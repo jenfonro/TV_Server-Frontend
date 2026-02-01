@@ -45,10 +45,13 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 17h8"></path><path d="M13 7h8"></path><path d="M13 12h8"></path><path d="M3 7l6 5-6 5V7Z"></path></svg>
             <span>登出</span>
           </a>
-          <div class="user-menu__footer">
-            <span class="text-xs text-gray-500">{{ appVersion }}</span>
-            <span class="status-dot"></span>
-          </div>
+	          <div class="user-menu__footer">
+	            <div class="min-w-0 flex flex-col gap-0.5">
+	              <span class="text-xs text-gray-500 truncate">后端 {{ backendCommit }}</span>
+	              <span class="text-xs text-gray-500 truncate">前端 {{ frontendCommit }}</span>
+	            </div>
+	            <span class="status-dot"></span>
+	          </div>
         </div>
       </div>
     </div>
@@ -498,8 +501,13 @@ import LoginPage from '../login/LoginPage.vue';
 const props = defineProps({ bootstrap: { type: Object, required: true } });
 const bootstrap = props.bootstrap;
 
-const appVersion =
-  (typeof window !== 'undefined' && window.__MEOWFILM_VERSION__) || 'beta';
+	const appVersion =
+	  (typeof window !== 'undefined' && window.__MEOWFILM_VERSION__) || 'beta';
+
+	const backendCommit =
+	  (typeof window !== 'undefined' && window.__MEOWFILM_BACKEND_COMMIT__) || appVersion;
+	const frontendCommit =
+	  (typeof window !== 'undefined' && window.__MEOWFILM_FRONTEND_COMMIT__) || appVersion;
 
 const LAST_SITE_KEY = 'meowfilm_last_site_key';
 const LAST_SITE_NAME_KEY = 'meowfilm_last_site_name';
