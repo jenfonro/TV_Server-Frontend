@@ -491,14 +491,41 @@ const isUiControlTarget = (target) => {
   );
 };
 
-const detectVideoFormat = (url) => {
-  const u = typeof url === 'string' ? url.toLowerCase() : '';
-  if (!u) return 'native';
-  if (u.includes('.m3u8') || u.includes('m3u8')) return 'hls';
-  if (u.includes('.flv') || u.includes('flv')) return 'flv';
-  if (u.includes('.mpd') || u.includes('mpd')) return 'dash';
-  return 'native';
-};
+	const detectVideoFormat = (url) => {
+	  const raw = typeof url === 'string' ? url.trim() : '';
+	  if (!raw) return 'native';
+	  const lower = raw.toLowerCase();
+	  const parsed = (() => {
+	    try {
+	      return new URL(raw, window.location.href);
+	    } catch (_e) {
+	      return null;
+	    }
+	  })();
+	  const pathOnly = parsed ? (parsed.pathname || '').toLowerCase() : lower.split('#')[0].split('?')[0];
+
+	  // Explicit hint for proxy/token URLs (e.g. GoProxy) that don't carry a suffix.
+	  const hinted = (() => {
+	    try {
+	      const v = parsed && parsed.searchParams ? String(parsed.searchParams.get('__tv_fmt') || '').trim().toLowerCase() : '';
+	      if (!v) return '';
+	      if (v === 'm3u8' || v === 'hls') return 'hls';
+	      if (v === 'mpd' || v === 'dash') return 'dash';
+	      if (v === 'flv') return 'flv';
+	      if (v === 'native' || v === 'mp4') return 'native';
+	      return '';
+	    } catch (_e) {
+	      return '';
+	    }
+	  })();
+	  if (hinted) return hinted;
+
+	  // Match by suffix (after stripping query/hash), not by loose substring.
+	  if (pathOnly.endsWith('.m3u8')) return 'hls';
+	  if (pathOnly.endsWith('.flv')) return 'flv';
+	  if (pathOnly.endsWith('.mpd')) return 'dash';
+	  return 'native';
+	};
 
 	const destroyCustomPlayer = (player) => {
 	  if (!player) return;
@@ -513,16 +540,28 @@ const detectVideoFormat = (url) => {
 	  } catch (_) {}
 	};
 
-	let hlsModulePromise = null;
-	let flvModulePromise = null;
-	let shakaModulePromise = null;
+		let hlsModulePromise = null;
+		let flvModulePromise = null;
+		let shakaModulePromise = null;
 
-	const loadHls = async () => {
-	  if (!hlsModulePromise) {
-	    hlsModulePromise = import('hls.js').then((m) => (m && (m.default || m)));
-	  }
-	  return await hlsModulePromise;
-	};
+			const loadHls = async () => {
+		  if (!hlsModulePromise) {
+		    hlsModulePromise = import('hls.js').then((m) => {
+		      // Resolve a Hls constructor across common export shapes.
+		      const resolve = (mod) => {
+		        if (!mod) return null;
+		        if (typeof mod === 'function') return mod;
+		        if (typeof mod.Hls === 'function') return mod.Hls;
+		        if (typeof mod.default === 'function') return mod.default;
+		        if (mod.default && typeof mod.default.Hls === 'function') return mod.default.Hls;
+		        if (mod.default && typeof mod.default.default === 'function') return mod.default.default;
+		        return null;
+		      };
+		      return resolve(m) || resolve(m && m.default) || null;
+		    });
+		  }
+		  return await hlsModulePromise;
+		};
 
 	const loadFlv = async () => {
 	  if (!flvModulePromise) {
@@ -640,13 +679,29 @@ const destroyNow = () => {
 };
 
 	const createCustomPlayer = {
-		  async hls(videoEl, url, headers) {
-		    const Hls = await loadHls();
-		    if (!Hls || !Hls.isSupported || !Hls.isSupported()) return null;
-		    const withCredentials = false;
-		    const bufferGoalSeconds = 60;
-		    const backBufferSeconds = 75;
-		    const hls = new Hls({
+			  async hls(videoEl, url, headers) {
+			    const Hls = await loadHls();
+			    const canUseHlsJs =
+			      !!Hls &&
+			      typeof Hls === 'function' &&
+			      typeof Hls.isSupported === 'function' &&
+			      !!Hls.isSupported();
+
+			    if (!canUseHlsJs) {
+			      // Fallback: if the browser can play HLS natively (Safari) or as a last resort (to surface errors),
+			      // set src so we at least issue a request.
+			      try {
+			        if (videoEl) {
+			          videoEl.src = url;
+			          try { videoEl.load(); } catch (_e) {}
+			        }
+			      } catch (_e) {}
+			      return { direct: true };
+			    }
+			    const withCredentials = false;
+			    const bufferGoalSeconds = 60;
+			    const backBufferSeconds = 75;
+			    const hls = new Hls({
 	      maxBufferLength: bufferGoalSeconds,
 	      maxMaxBufferLength: bufferGoalSeconds * 2,
 	      backBufferLength: backBufferSeconds,
@@ -809,7 +864,10 @@ const destroyNow = () => {
 			            const headers = props.headers || {};
 			            const token = `${Date.now()}-${Math.random()}`;
 			            artInstance.__tvCustomToken = token;
-			            (async () => {
+			            // Important: return a Promise so ArtPlayer treats this as an async custom loader.
+			            // This guarantees the token URL will be requested by the custom engine (hls.js/flv.js/shaka),
+			            // and avoids an extra preflight load that can get cancelled.
+			            return (async () => {
 			              let custom = null;
 			              try {
 			                if (format === 'hls') custom = await createCustomPlayer.hls(videoEl, playUrl, headers);
@@ -818,15 +876,30 @@ const destroyNow = () => {
 			              } catch (_e) {
 			                custom = null;
 			              }
+
 			              // If URL changed before module loaded, drop the created player.
-			              if (!artInstance || artInstance.__tvCustomToken !== token || (artInstance.url || '') !== playUrl) {
+			              if (!artInstance || artInstance.__tvCustomToken !== token) {
 			                destroyCustomPlayer(custom);
-			                return;
+			                return null;
 			              }
-			              if (custom) artInstance.customPlayer = custom;
+
+			              if (custom) {
+			                artInstance.customPlayer = custom;
+			              } else {
+			                // As a last-resort fallback, set src so we still issue a request and show errors.
+			                try {
+			                  if (videoEl && playUrl) {
+			                    videoEl.src = playUrl;
+			                    try { videoEl.load(); } catch (_e) {}
+			                  }
+			                } catch (_e) {}
+			              }
+
 			              try {
 			                if (props.autoplay && videoEl && typeof videoEl.play === 'function') videoEl.play().catch(() => {});
 			              } catch (_e) {}
+
+			              return custom;
 			            })();
 			          },
 			        }

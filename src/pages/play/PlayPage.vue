@@ -2617,7 +2617,25 @@ const maybeUseGoProxyForPlayback = async (playUrl, playHeaders, preferredPan = '
   const base = await pickGoProxyBaseForPlayback(preferredPan);
   if (!base) return { url: playUrl, headers: playHeaders };
   const { proxyUrl } = await registerGoProxyToken({ base, url: playUrl, headers: playHeaders });
-  return { url: proxyUrl, headers: {} };
+
+  // Preserve format for token URLs that don't carry a suffix.
+  const decorated = (() => {
+    try {
+      const origin = new URL(String(playUrl || '').trim(), window.location.href);
+      const isM3U8 = String(origin.pathname || '').toLowerCase().endsWith('.m3u8');
+      if (!isM3U8) return proxyUrl;
+      const p = new URL(String(proxyUrl || '').trim(), window.location.href);
+      p.searchParams.set('__tv_fmt', 'm3u8');
+      return p.toString();
+    } catch (_e) {
+      const u = String(proxyUrl || '').trim();
+      if (!u) return proxyUrl;
+      const sep = u.includes('?') ? '&' : '?';
+      return `${u}${sep}__tv_fmt=m3u8`;
+    }
+  })();
+
+  return { url: decorated, headers: {} };
 };
 
 const playRequestState = {
