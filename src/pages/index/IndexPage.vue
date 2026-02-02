@@ -47,8 +47,9 @@
           </a>
 	          <div class="user-menu__footer">
 	            <div class="min-w-0 flex flex-col gap-0.5">
-	              <span class="text-xs text-gray-500 truncate">后端 {{ backendCommit }}</span>
-	              <span class="text-xs text-gray-500 truncate">前端 {{ frontendCommit }}</span>
+	              <span class="text-xs text-gray-500 truncate">{{ appVersion }}</span>
+	              <span v-if="backendCommit && backendCommit !== appVersion" class="text-xs text-gray-500 truncate">后端 {{ backendCommit }}</span>
+	              <span v-if="frontendCommit && frontendCommit !== appVersion" class="text-xs text-gray-500 truncate">前端 {{ frontendCommit }}</span>
 	            </div>
 	            <span class="status-dot"></span>
 	          </div>

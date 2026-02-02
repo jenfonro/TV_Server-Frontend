@@ -29,8 +29,9 @@
     </form>
     <div class="footer">
       <div class="min-w-0 flex flex-col items-center gap-0.5">
-        <div class="text-xs text-gray-500 truncate">后端 {{ backendCommit }}</div>
-        <div class="text-xs text-gray-500 truncate">前端 {{ frontendCommit }}</div>
+        <div class="text-xs text-gray-500 truncate">{{ appVersion }}</div>
+        <div v-if="backendCommit && backendCommit !== appVersion" class="text-xs text-gray-500 truncate">后端 {{ backendCommit }}</div>
+        <div v-if="frontendCommit && frontendCommit !== appVersion" class="text-xs text-gray-500 truncate">前端 {{ frontendCommit }}</div>
       </div>
     </div>
   </div>
