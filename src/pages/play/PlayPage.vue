@@ -2601,6 +2601,160 @@ const registerGoProxyToken = async ({ base, url, headers }) => {
   return { token, proxyUrl };
 };
 
+const isProbablyM3U8Url = (urlString) => {
+  const raw = typeof urlString === 'string' ? urlString.trim() : '';
+  if (!raw) return false;
+  try {
+    const u = new URL(raw, window.location.href);
+    const hinted = String(u.searchParams.get('__tv_fmt') || '').trim().toLowerCase();
+    if (hinted === 'm3u8' || hinted === 'hls') return true;
+    return String(u.pathname || '').toLowerCase().endsWith('.m3u8');
+  } catch (_e) {
+    const noQuery = raw.split('#')[0].split('?')[0].toLowerCase();
+    return noQuery.endsWith('.m3u8');
+  }
+};
+
+const parseM3U8FirstUrls = (text) => {
+  const raw = typeof text === 'string' ? text : '';
+  const lines = raw.split(/\r?\n/);
+  let firstUri = '';
+  let keyUri = '';
+  for (const line of lines) {
+    const t = String(line || '').trim();
+    if (!t) continue;
+    if (t.startsWith('#')) {
+      if (!keyUri && /^#EXT-X-KEY\b/i.test(t) && /URI\s*=\s*"/i.test(t)) {
+        const m = /URI\s*=\s*"([^"]+)"/i.exec(t);
+        if (m && m[1]) keyUri = String(m[1]).trim();
+      }
+      continue;
+    }
+    if (!firstUri) firstUri = t;
+    if (firstUri && keyUri) break;
+  }
+  return { firstUri, keyUri };
+};
+
+const probeFetchSmall = async (urlString, timeoutMs = 6000) => {
+  const url = typeof urlString === 'string' ? urlString.trim() : '';
+  if (!url) return { ok: false, status: 0, message: 'missing url' };
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const t = setTimeout(() => {
+    try {
+      if (controller) controller.abort();
+    } catch (_e) {}
+  }, timeoutMs);
+  try {
+    const resp = await fetch(url, {
+      method: 'GET',
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store',
+      headers: { Range: 'bytes=0-0' },
+      signal: controller ? controller.signal : undefined,
+    });
+    const status = resp && typeof resp.status === 'number' ? resp.status : 0;
+    if (!resp || !resp.ok) return { ok: false, status, message: `http ${status}` };
+    if (status !== 200 && status !== 206) return { ok: false, status, message: `unexpected http ${status}` };
+    return { ok: true, status, message: '' };
+  } catch (e) {
+    const msg = e && e.name === 'AbortError' ? 'timeout' : (e && e.message ? String(e.message) : 'fetch failed');
+    return { ok: false, status: 0, message: msg };
+  } finally {
+    clearTimeout(t);
+  }
+};
+
+const registerCatM3U8 = async ({ apiBase, tvUser, url, headers }) => {
+  const base = normalizeCatPawOpenApiBase(apiBase);
+  if (!base) throw new Error('CatPawOpen 接口地址未设置');
+  const target = new URL('api/m3u8/register', base);
+  const u = typeof tvUser === 'string' ? tvUser.trim() : '';
+  const resp = await fetch(target.toString(), {
+    method: 'POST',
+    mode: 'cors',
+    credentials: 'omit',
+    headers: { 'Content-Type': 'application/json', ...(u ? { 'X-TV-User': u } : {}) },
+    body: JSON.stringify({
+      url: typeof url === 'string' ? url.trim() : '',
+      headers: headers && typeof headers === 'object' ? headers : {},
+    }),
+  });
+  const status = resp && typeof resp.status === 'number' ? resp.status : 0;
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || !data || data.ok === false) {
+    const msg = data && (data.message || data.error) ? String(data.message || data.error) : `HTTP ${status}`;
+    const err = new Error(msg);
+    err.status = status;
+    throw err;
+  }
+  const token = data && data.token ? String(data.token).trim() : '';
+  const indexPath = data && data.index ? String(data.index).trim() : '';
+  const proxyPath = data && data.proxy ? String(data.proxy).trim() : '';
+  if (!token || !indexPath || !proxyPath) throw new Error('CatPawOpen m3u8 register 返回无效');
+  const indexUrl = new URL(indexPath.replace(/^\//, ''), base).toString();
+  const proxyUrl = new URL(proxyPath.replace(/^\//, ''), base).toString();
+  return { token, indexUrl, proxyUrl };
+};
+
+const fetchM3U8Text = async ({ url, tvUser }) => {
+  const target = typeof url === 'string' ? url.trim() : '';
+  if (!target) throw new Error('missing m3u8 url');
+  const u = typeof tvUser === 'string' ? tvUser.trim() : '';
+  const resp = await fetch(target, {
+    method: 'GET',
+    mode: 'cors',
+    credentials: 'omit',
+    cache: 'no-store',
+    headers: { ...(u ? { 'X-TV-User': u } : {}) },
+  });
+  if (!resp.ok) {
+    const err = new Error(`m3u8 http ${resp.status}`);
+    err.status = resp.status;
+    throw err;
+  }
+  return await resp.text();
+};
+
+const maybeUseCatM3U8ProxyForPlayback = async ({
+  apiBase,
+  tvUser,
+  playUrl,
+  playHeaders,
+}) => {
+  if (!isProbablyM3U8Url(playUrl)) return null;
+  if (!apiBase) return null;
+
+  // 1) Ask CatPawOpen to fetch the m3u8 with required headers and give us both playlists.
+  const { indexUrl, proxyUrl } = await registerCatM3U8({ apiBase, tvUser, url: playUrl, headers: playHeaders });
+
+  // 2) Fetch the normalized "index" playlist (absolute URIs), then probe first segment (and key if present)
+  // from the client side to decide whether direct segment fetching works (CORS / IP-binding / anti-leech).
+  let text = '';
+  try {
+    text = await fetchM3U8Text({ url: indexUrl, tvUser });
+  } catch (_e) {
+    // If we can't even fetch index, fall back to proxy playlist.
+    return { url: proxyUrl, headers: {}, reason: 'index-fetch-failed' };
+  }
+  const { firstUri, keyUri } = parseM3U8FirstUrls(text);
+  if (!firstUri) return { url: proxyUrl, headers: {}, reason: 'no-segment' };
+
+  // If this is a master playlist (child m3u8), prefer proxy mode to avoid cross-site m3u8 fetches.
+  if (String(firstUri).toLowerCase().endsWith('.m3u8')) return { url: proxyUrl, headers: {}, reason: 'master-playlist' };
+
+  if (keyUri) {
+    const keyProbe = await probeFetchSmall(keyUri);
+    if (!keyProbe.ok) return { url: proxyUrl, headers: {}, reason: `key-probe-failed:${keyProbe.message}` };
+  }
+  const segProbe = await probeFetchSmall(firstUri);
+  if (!segProbe.ok) return { url: proxyUrl, headers: {}, reason: `seg-probe-failed:${segProbe.message}` };
+
+  // Direct mode: use CatPawOpen index playlist (same-origin), but segments stay upstream.
+  return { url: indexUrl, headers: {}, reason: 'direct-ok' };
+};
+
 const maybeUseGoProxyForPlayback = async (playUrl, playHeaders, preferredPan = '', enabled = false) => {
   if (!enabled) return { url: playUrl, headers: playHeaders };
   const h = playHeaders && typeof playHeaders === 'object' ? playHeaders : {};
@@ -2792,6 +2946,25 @@ const requestPlay = async () => {
         }
 
         const goProxyEnabled = !!props.bootstrap?.settings?.goProxyEnabled;
+
+	      // HLS/m3u8: if possible, use CatPawOpen m3u8 proxy mode to avoid CORS/IP-bound issues.
+	      // - index.m3u8: CatPawOpen fetches playlist with headers and returns absolute URIs (segments are upstream)
+	      // - proxy.m3u8: playlist + segments/key are proxied through CatPawOpen
+	      try {
+	        const out = await maybeUseCatM3U8ProxyForPlayback({
+	          apiBase,
+	          tvUser,
+	          playUrl: finalUrl,
+	          playHeaders: finalHeaders,
+	        });
+	        if (out && typeof out.url === 'string' && out.url.trim()) {
+	          finalUrl = out.url.trim();
+	          finalHeaders = out.headers && typeof out.headers === 'object' ? out.headers : {};
+	          disableGoProxy = true;
+	        }
+	      } catch (_e) {
+	        // best-effort
+	      }
 
 	      try {
 	        const preferredPan = guessPreferredPanFromFlag(flag);

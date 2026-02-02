@@ -877,6 +877,10 @@ export function initDashboardPage(bootstrap = {}) {
       if (proxyInput && settingsResp && settingsResp.settings && typeof settingsResp.settings.proxy === 'string') {
         proxyInput.value = settingsResp.settings.proxy || '';
       }
+      const goProxyApiInput = document.querySelector('#catPawOpenSettingsForm input[name="catPawOpenGoProxyApi"]');
+      if (goProxyApiInput && settingsResp && settingsResp.settings && typeof settingsResp.settings.goProxyApi === 'string') {
+        goProxyApiInput.value = settingsResp.settings.goProxyApi || '';
+      }
       const panBuiltinInput = document.getElementById('catPawOpenPanBuiltinResolverEnabled');
       if (panBuiltinInput && settingsResp && settingsResp.settings) {
         panBuiltinInput.checked = !!settingsResp.settings.panBuiltinResolverEnabled;
@@ -904,6 +908,8 @@ export function initDashboardPage(bootstrap = {}) {
     if (!normalizedBase) return { ok: false, skipped: true, reason: 'unconfigured' };
     const proxyInput = document.querySelector('#catPawOpenSettingsForm input[name="catPawOpenProxy"]');
     const proxy = proxyInput && typeof proxyInput.value === 'string' ? proxyInput.value : '';
+    const goProxyApiInput = document.querySelector('#catPawOpenSettingsForm input[name="catPawOpenGoProxyApi"]');
+    const goProxyApi = goProxyApiInput && typeof goProxyApiInput.value === 'string' ? goProxyApiInput.value : '';
     const panBuiltinInput = document.getElementById('catPawOpenPanBuiltinResolverEnabled');
     const panBuiltinResolverEnabled = !!(panBuiltinInput && panBuiltinInput.checked);
     const onlineConfigs = catPawOpenConfigListEditor ? catPawOpenConfigListEditor.getItems().map((it) => ({ name: it.name, url: it.url })) : [];
@@ -913,7 +919,7 @@ export function initDashboardPage(bootstrap = {}) {
         apiBase: normalizedBase,
         path: 'admin/settings',
         method: 'PUT',
-        body: { proxy: String(proxy || ''), panBuiltinResolverEnabled, onlineConfigs },
+        body: { proxy: String(proxy || ''), panBuiltinResolverEnabled, goProxyApi: String(goProxyApi || ''), onlineConfigs },
       });
       if (proxyInput && resp && resp.settings && typeof resp.settings.proxy === 'string') {
         proxyInput.value = resp.settings.proxy || '';

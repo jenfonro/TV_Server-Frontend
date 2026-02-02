@@ -450,6 +450,16 @@
 				                  </label>
 				                </div>
 				              </div>
+				              <div class="space-y-2">
+				                <div class="text-sm font-medium text-gray-700 dark:text-gray-200">GoProxy API（挂载在 CatPawOpen 同机）</div>
+				                <input
+				                  name="catPawOpenGoProxyApi"
+				                  class="tv-field"
+				                  placeholder="/api 或 https://example.com/"
+				                  autocomplete="off"
+				                >
+				                <p class="text-xs text-gray-500 dark:text-gray-400">用于 m3u8 分片改写指向同机 GoProxy。</p>
+				              </div>
 				              <div class="pt-1 flex items-center gap-3">
 				                <button id="catPawOpenSyncPanLoginSettingsBtn" type="button" class="btn-green">同步网盘账号至catpawopen</button>
 					                <div
