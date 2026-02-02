@@ -2331,27 +2331,12 @@ const normalizeGoProxyServers = (value) => {
   return out;
 };
 
-const detectGoProxyPan = (playUrl, playHeaders, preferredPan = '') => {
-  const raw = typeof playUrl === 'string' ? playUrl.trim() : '';
-  if (!raw) return '';
-  try {
-    const u = new URL(raw);
-    const hn = (u.hostname || '').toLowerCase();
-    if (hn === 'baidupcs.com' || hn.endsWith('.baidupcs.com')) return 'baidu';
-    if (hn.endsWith('.quark.cn') || hn === 'quark.cn') return 'quark';
-  } catch (_e) {}
-  const headers = playHeaders && typeof playHeaders === 'object' ? playHeaders : {};
-  const ref = String(headers.Referer || headers.referer || '');
-  if (ref.includes('pan.quark.cn') || ref.includes('quark.cn')) return 'quark';
-  return '';
-};
-
-const guessPreferredPanFromLabel = (label) => {
-  const raw = typeof label === 'string' ? label.trim() : '';
+const guessPreferredPanFromFlag = (flag) => {
+  const raw = typeof flag === 'string' ? flag.trim() : '';
   if (!raw) return '';
   if (raw.includes('百度')) return 'baidu';
   const lower = raw.toLowerCase();
-  if (raw.includes('夸克') || raw.includes('夸父') || lower.includes('quark') || lower.includes('kuafu')) return 'quark';
+  if (raw.includes('夸父') || raw.includes('夸克') || lower.includes('quark') || lower.includes('kuafu')) return 'quark';
   return '';
 };
 
@@ -2573,11 +2558,25 @@ const registerGoProxyToken = async ({ base, url, headers }) => {
   if (!b) throw new Error('missing goProxy base');
   const targetUrl = typeof url === 'string' ? url.trim() : '';
   if (!targetUrl) throw new Error('missing play url');
-  const safeHeaders = {};
   const h = headers && typeof headers === 'object' ? headers : {};
-  ['User-Agent', 'Referer', 'Cookie', 'Authorization'].forEach((k) => {
-    const v = h[k] || h[k.toLowerCase()];
-    if (typeof v === 'string' && v.trim()) safeHeaders[k] = v.trim();
+  const headersList = [];
+  Object.keys(h).forEach((k) => {
+    const key = typeof k === 'string' ? k.trim() : '';
+    if (!key) return;
+    const v = h[k];
+    if (v == null) return;
+    if (Array.isArray(v)) {
+      v.forEach((it) => {
+        if (it == null) return;
+        const s = String(it).trim();
+        if (!s) return;
+        headersList.push({ key, value: s });
+      });
+      return;
+    }
+    const s = String(v).trim();
+    if (!s) return;
+    headersList.push({ key, value: s });
   });
   const registerUrl = joinBaseUrl(b, 'register');
   if (!registerUrl) throw new Error('invalid register url');
@@ -2586,7 +2585,7 @@ const registerGoProxyToken = async ({ base, url, headers }) => {
     mode: 'cors',
     credentials: 'omit',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: targetUrl, headers: safeHeaders }),
+    body: JSON.stringify({ url: targetUrl, headersList }),
   });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
@@ -2604,9 +2603,18 @@ const registerGoProxyToken = async ({ base, url, headers }) => {
 
 const maybeUseGoProxyForPlayback = async (playUrl, playHeaders, preferredPan = '', enabled = false) => {
   if (!enabled) return { url: playUrl, headers: playHeaders };
-  const pan = detectGoProxyPan(playUrl, playHeaders, preferredPan);
-  if (!pan) return { url: playUrl, headers: playHeaders };
-  const base = await pickGoProxyBaseForPlayback(pan);
+  const h = playHeaders && typeof playHeaders === 'object' ? playHeaders : {};
+  const hasHeader = Object.keys(h).some((k) => {
+    if (!k || typeof k !== 'string') return false;
+    const v = h[k];
+    if (v == null) return false;
+    if (Array.isArray(v)) return v.some((it) => it != null && String(it).trim());
+    return String(v).trim();
+  });
+  // Only proxy when server explicitly returns playback headers (typical anti-leech/CORS cases).
+  if (!hasHeader) return { url: playUrl, headers: playHeaders };
+
+  const base = await pickGoProxyBaseForPlayback(preferredPan);
   if (!base) return { url: playUrl, headers: playHeaders };
   const { proxyUrl } = await registerGoProxyToken({ base, url: playUrl, headers: playHeaders });
   return { url: proxyUrl, headers: {} };
@@ -2767,14 +2775,14 @@ const requestPlay = async () => {
 
         const goProxyEnabled = !!props.bootstrap?.settings?.goProxyEnabled;
 
-      try {
-        const preferredPan = guessPreferredPanFromLabel(src && src.label ? String(src.label) : '');
-        const out = await maybeUseGoProxyForPlayback(finalUrl, finalHeaders, preferredPan, goProxyEnabled && !disableGoProxy);
-        if (out && typeof out === 'object') {
-          if (typeof out.url === 'string' && out.url.trim()) finalUrl = out.url.trim();
-          if (out.headers && typeof out.headers === 'object') finalHeaders = out.headers;
-        }
-      } catch (e) {
+	      try {
+	        const preferredPan = guessPreferredPanFromFlag(flag);
+	        const out = await maybeUseGoProxyForPlayback(finalUrl, finalHeaders, preferredPan, goProxyEnabled && !disableGoProxy);
+	        if (out && typeof out === 'object') {
+	          if (typeof out.url === 'string' && out.url.trim()) finalUrl = out.url.trim();
+	          if (out.headers && typeof out.headers === 'object') finalHeaders = out.headers;
+	        }
+	      } catch (e) {
         // Keep direct URL as fallback (GoProxy is best-effort on the client).
         console.warn('[GoProxy] register failed:', e && e.message ? e.message : e);
       }
