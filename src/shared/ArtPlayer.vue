@@ -678,14 +678,14 @@ const destroyNow = () => {
   bufferedEnd.value = 0;
 };
 
-	const createCustomPlayer = {
-			  async hls(videoEl, url, headers) {
-			    const Hls = await loadHls();
-			    const canUseHlsJs =
-			      !!Hls &&
-			      typeof Hls === 'function' &&
-			      typeof Hls.isSupported === 'function' &&
-			      !!Hls.isSupported();
+		const createCustomPlayer = {
+				  async hls(videoEl, url, headers) {
+				    const Hls = await loadHls();
+				    const canUseHlsJs =
+				      !!Hls &&
+				      typeof Hls === 'function' &&
+				      typeof Hls.isSupported === 'function' &&
+				      !!Hls.isSupported();
 
 			    if (!canUseHlsJs) {
 			      // Fallback: if the browser can play HLS natively (Safari) or as a last resort (to surface errors),
@@ -697,20 +697,23 @@ const destroyNow = () => {
 			        }
 			      } catch (_e) {}
 			      return { direct: true };
-			    }
-			    const withCredentials = false;
-			    const bufferGoalSeconds = 60;
-			    const backBufferSeconds = 75;
-			    const hls = new Hls({
-	      maxBufferLength: bufferGoalSeconds,
-	      maxMaxBufferLength: bufferGoalSeconds * 2,
-	      backBufferLength: backBufferSeconds,
-	      maxBufferSize: 200 * 1000 * 1000,
-	      // Reduce reconnect/retry attempts to avoid long "reconnecting" loops on unstable networks.
-	      manifestLoadingMaxRetry: 2,
-	      levelLoadingMaxRetry: 2,
-	      fragLoadingMaxRetry: 2,
-      keyLoadingMaxRetry: 2,
+				    }
+				    const withCredentials = false;
+				    // Desktop browsers can afford a larger forward buffer to smooth out network jitter,
+				    // especially for high bitrate streams (4K) where `maxBufferSize` becomes the real limiter.
+				    const bufferGoalSeconds = isMobile.value ? 60 : 120;
+				    const backBufferSeconds = isMobile.value ? 75 : 180;
+				    const maxBufferSizeBytes = isMobile.value ? 200 * 1000 * 1000 : 800 * 1000 * 1000;
+				    const hls = new Hls({
+		      maxBufferLength: bufferGoalSeconds,
+		      maxMaxBufferLength: bufferGoalSeconds * 2,
+		      backBufferLength: backBufferSeconds,
+		      maxBufferSize: maxBufferSizeBytes,
+		      // Reduce reconnect/retry attempts to avoid long "reconnecting" loops on unstable networks.
+		      manifestLoadingMaxRetry: 2,
+		      levelLoadingMaxRetry: 2,
+		      fragLoadingMaxRetry: 2,
+	      keyLoadingMaxRetry: 2,
       xhrSetup(xhr) {
         xhr.withCredentials = withCredentials;
         if (!headers || typeof headers !== 'object') return;
@@ -1811,8 +1814,6 @@ defineExpose({ destroy: destroyNow, pause, play, tryAutoplay });
   padding: var(--yt-pill-pad-y) var(--yt-pill-pad-x);
   border-radius: 999px;
   background: rgba(20, 20, 20, 0.45);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
   color: rgba(255, 255, 255, 0.92);
 }
 
