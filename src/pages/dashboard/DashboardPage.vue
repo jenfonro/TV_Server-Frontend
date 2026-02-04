@@ -634,27 +634,58 @@
 		                <div class="text-xs text-gray-500 dark:text-gray-400">开启后会测速并自动选择最快服务器。</div>
 		              </div>
 
-	              <input type="hidden" id="goProxyServersJson" name="goProxyServersJson" value="">
+		              <input type="hidden" id="goProxyServersJson" name="goProxyServersJson" value="">
 
-	              <div class="space-y-2">
-	                <div class="text-sm font-medium text-gray-700 dark:text-gray-200">GoProxy 服务器</div>
-	                <div class="flex items-center gap-2">
-	                  <input
-	                    id="goProxyServerInput"
-	                    class="tv-field flex-1 min-w-0"
-	                    placeholder="https://catproxy.example.com"
-	                    autocomplete="off"
-	                  >
-	                  <button id="goProxyServerAdd" type="button" class="btn-green">添加</button>
-	                </div>
-	                <ul id="goProxyServerList" class="space-y-2 text-sm text-gray-700 dark:text-gray-200">
-	                  <li class="text-gray-500 dark:text-gray-400">无数据</li>
-	                </ul>
-	              </div>
+		              <div class="space-y-2">
+		                <div class="flex items-center gap-2 mb-1">
+		                  <div class="text-sm font-medium text-gray-700 dark:text-gray-200">GoProxy 服务器</div>
+		                  <button id="goProxyServerAdd" type="button" class="btn-green">添加</button>
+		                </div>
 
-	              <div class="pt-1 flex justify-start">
-	                <button type="submit" class="btn-green">保存</button>
-	              </div>
+		                <div class="tv-cpo-config-shell">
+		                  <div id="goProxyServerEditor" class="tv-panel tv-cpo-config-editor mb-3 hidden">
+		                    <div class="grid items-center" style="grid-template-columns:max-content 1fr;gap:14px 18px">
+		                      <span class="text-sm font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">名称：</span>
+		                      <input id="goProxyServerEditorName" class="tv-field" placeholder="名称" autocomplete="off">
+
+		                      <span class="text-sm font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">显示名称：</span>
+		                      <input id="goProxyServerEditorDisplayName" class="tv-field" placeholder="显示名称" autocomplete="off">
+
+		                      <span class="text-sm font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">接口地址：</span>
+		                      <input id="goProxyServerEditorBase" class="tv-field" placeholder="http://example.com" autocomplete="off">
+		                    </div>
+		                    <div class="flex justify-start items-center gap-3 mt-3">
+		                      <button id="goProxyServerEditorConfirm" class="btn-add" type="button" disabled>添加</button>
+		                      <button id="goProxyServerEditorCancel" type="button" class="btn-ghost-blue">取消</button>
+		                    </div>
+		                    <div id="goProxyServerEditorStatus" class="text-sm mt-2" hidden></div>
+		                  </div>
+
+		                  <div class="tv-panel tv-cpo-config-table overflow-x-auto">
+		                    <table class="table-auto w-max max-w-full text-sm text-left text-gray-700 dark:text-gray-100">
+		                      <thead class="table-head">
+		                        <tr>
+		                          <th class="px-3 py-2 whitespace-nowrap">名称</th>
+		                          <th class="px-3 py-2 whitespace-nowrap">显示名称</th>
+		                          <th class="px-3 py-2 whitespace-nowrap">接口地址</th>
+		                          <th class="px-3 py-2 whitespace-nowrap">版本</th>
+		                          <th class="px-3 py-2 whitespace-nowrap">状态</th>
+		                          <th class="px-3 py-2 whitespace-nowrap">操作</th>
+		                        </tr>
+		                      </thead>
+		                      <tbody class="divide-y divide-gray-100 dark:divide-gray-800" id="goProxyServerTableBody">
+		                        <tr>
+		                          <td class="px-3 py-2 text-gray-500 dark:text-gray-400" colspan="6">无数据</td>
+		                        </tr>
+		                      </tbody>
+		                    </table>
+		                  </div>
+		                </div>
+		              </div>
+
+		              <div class="pt-1 flex justify-start">
+		                <button type="submit" class="btn-green">保存</button>
+		              </div>
 	            </form>
 	          </div>
 

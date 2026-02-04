@@ -27,9 +27,15 @@ export function initDashboardPage(bootstrap = {}) {
   const goProxyEnabledInput = document.getElementById('goProxyEnabled');
   const goProxyAutoSelectInput = document.getElementById('goProxyAutoSelect');
   const goProxyServersJsonInput = document.getElementById('goProxyServersJson');
-  const goProxyServerInput = document.getElementById('goProxyServerInput');
   const goProxyServerAdd = document.getElementById('goProxyServerAdd');
-  const goProxyServerList = document.getElementById('goProxyServerList');
+  const goProxyServerEditor = document.getElementById('goProxyServerEditor');
+  const goProxyServerEditorName = document.getElementById('goProxyServerEditorName');
+  const goProxyServerEditorDisplayName = document.getElementById('goProxyServerEditorDisplayName');
+  const goProxyServerEditorBase = document.getElementById('goProxyServerEditorBase');
+  const goProxyServerEditorConfirm = document.getElementById('goProxyServerEditorConfirm');
+  const goProxyServerEditorCancel = document.getElementById('goProxyServerEditorCancel');
+  const goProxyServerEditorStatus = document.getElementById('goProxyServerEditorStatus');
+  const goProxyServerTableBody = document.getElementById('goProxyServerTableBody');
   const videoSourceImportFromCatPawOpenBtn = document.getElementById('videoSourceImportFromCatPawOpen');
   const videoSourceSitesToggle = document.getElementById('videoSourceSitesToggle');
   const videoSourceSitesToggleIcon = document.getElementById('videoSourceSitesToggleIcon');
@@ -440,7 +446,19 @@ export function initDashboardPage(bootstrap = {}) {
   };
 
   let goProxyServers = [];
+  let goProxyProbes = new Map();
   let goProxySaving = false;
+  let goProxyEditorMode = 'hidden'; // hidden | add | edit
+  let goProxyEditorEditingKey = '';
+  let goProxyServerEditorHomeParent = null;
+  let goProxyServerEditorHomeNextSibling = null;
+
+  const restoreGoProxyServerEditorHome = () => {
+    if (!goProxyServerEditor) return;
+    if (!goProxyServerEditorHomeParent) return;
+    if (goProxyServerEditor.parentNode === goProxyServerEditorHomeParent) return;
+    goProxyServerEditorHomeParent.insertBefore(goProxyServerEditor, goProxyServerEditorHomeNextSibling);
+  };
 
   const normalizeHttpBase = (value) => {
     const raw = typeof value === 'string' ? value.trim() : '';
@@ -1314,6 +1332,40 @@ export function initDashboardPage(bootstrap = {}) {
     return { ok: true };
   };
 
+  const normalizeGoProxyProbeState = (v) => {
+    const raw = typeof v === 'string' ? v.trim() : '';
+    if (raw === 'online' || raw === 'offline' || raw === 'checking') return raw;
+    return 'checking';
+  };
+  const goProxyProbeClassFor = (state) => {
+    const s = normalizeGoProxyProbeState(state);
+    if (s === 'online') return 'tag-green';
+    if (s === 'offline') return 'tag-red';
+    return 'tag-gray';
+  };
+  const goProxyProbeTextFor = (state) => {
+    const s = normalizeGoProxyProbeState(state);
+    if (s === 'online') return '在线';
+    if (s === 'offline') return '离线';
+    return '检测中';
+  };
+  const buildGoProxyProbeTag = (state) => {
+    const span = document.createElement('span');
+    span.className = `availability-tag ${goProxyProbeClassFor(state)}`;
+    span.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/></svg>${goProxyProbeTextFor(state)}`;
+    return span;
+  };
+
+  const guessGoProxyNameFromBase = (base) => {
+    try {
+      const u = new URL(base);
+      const host = String(u.host || '').trim();
+      return host || '';
+    } catch (_e) {
+      return '';
+    }
+  };
+
   const normalizeGoProxyServers = (servers) => {
     const arr = Array.isArray(servers) ? servers : [];
     const out = [];
@@ -1324,10 +1376,20 @@ export function initDashboardPage(bootstrap = {}) {
       const key = base.toLowerCase();
       if (seen.has(key)) return;
       seen.add(key);
+
+      const rawName = s && typeof s === 'object' && typeof s.name === 'string' ? s.name : '';
+      const rawDisplayName = s && typeof s === 'object' && typeof s.displayName === 'string' ? s.displayName : '';
+      const defaultName = guessGoProxyNameFromBase(base);
+      const name = String(rawName || '').trim() || defaultName;
+      const displayName = String(rawDisplayName || '').trim() || name;
+
       const pans = s && typeof s === 'object' && typeof s.pans === 'object' && s.pans ? s.pans : {};
       const hasBaidu = Object.prototype.hasOwnProperty.call(pans, 'baidu');
       const hasQuark = Object.prototype.hasOwnProperty.call(pans, 'quark');
+
       out.push({
+        name,
+        displayName,
         base,
         pans: {
           baidu: hasBaidu ? !!pans.baidu : true,
@@ -1338,62 +1400,159 @@ export function initDashboardPage(bootstrap = {}) {
     return out;
   };
 
-	  const renderGoProxyServerList = () => {
-	    if (!goProxyServerList) return;
-	    goProxyServerList.innerHTML = '';
-	    if (!goProxyServers.length) {
-	      appendEmptyItem(goProxyServerList);
-	      return;
-	    }
+  const ensureGoProxyProbeEntry = (base) => {
+    const key = String(base || '').toLowerCase();
+    if (!key) return;
+    if (goProxyProbes.has(key)) return;
+    goProxyProbes.set(key, { state: 'checking', version: '', checkedAt: 0 });
+  };
 
-	    goProxyServers.forEach((server, idx) => {
-	      const li = createEl('li', {
-	        className:
-	          'flex items-center gap-3 rounded-lg border border-gray-200 dark:border-white/10 bg-white/60 dark:bg-white/5 px-3 py-2',
-	      });
+  const writeGoProxyServersJson = () => {
+    const serversJson = JSON.stringify(goProxyServers || []);
+    if (goProxyServersJsonInput) goProxyServersJsonInput.value = serversJson;
+    return serversJson;
+  };
 
-	      const baseSpan = createEl('span', { className: 'min-w-0 flex-1 truncate', text: server.base });
+  const renderGoProxyServerTable = () => {
+    if (!goProxyServerTableBody) return;
+    goProxyServerTableBody.innerHTML = '';
+    if (!goProxyServers.length) {
+      restoreGoProxyServerEditorHome();
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.className = 'px-3 py-2 text-gray-500 dark:text-gray-400';
+      td.colSpan = 6;
+      td.textContent = '无数据';
+      tr.appendChild(td);
+      goProxyServerTableBody.appendChild(tr);
+      return;
+    }
 
-	      const toggles = createEl('div', { className: 'flex items-center gap-3 shrink-0' });
+    const editingKey = goProxyEditorMode === 'edit' ? String(goProxyEditorEditingKey || '').toLowerCase() : '';
 
-	      const mkToggle = (panKey, labelText) => {
-	        const wrap = createEl('div', { className: 'flex items-center gap-2' });
-	        const t = createEl('span', { className: CLS.mutedXs, text: labelText });
-	        const { label, input } = createSwitchLabel({
-	          checked: !!(server.pans && server.pans[panKey]),
-	          onChange: () => {
-	            const next = goProxyServers.slice();
-	            const cur = next[idx];
-	            if (!cur) return;
-	            cur.pans = Object.assign({}, cur.pans, { [panKey]: !!input.checked });
-	            next[idx] = cur;
-	            goProxyServers = next;
-	            renderGoProxyServerList();
-	          },
-	        });
-	        wrap.appendChild(t);
-	        wrap.appendChild(label);
-	        return wrap;
-	      };
+    goProxyServers.forEach((server) => {
+      const base = server && typeof server.base === 'string' ? server.base : '';
+      const baseKey = base ? base.toLowerCase() : '';
+      const probe = baseKey && goProxyProbes.has(baseKey) ? goProxyProbes.get(baseKey) : { state: 'checking', version: '', checkedAt: 0 };
+      const state = probe && probe.state ? probe.state : 'checking';
 
-	      toggles.appendChild(mkToggle('baidu', '百度'));
-	      toggles.appendChild(mkToggle('quark', '夸克'));
+      const tr = document.createElement('tr');
 
-      const delBtn = document.createElement('button');
+      const tdName = document.createElement('td');
+      tdName.className = 'px-3 py-2 whitespace-nowrap font-medium';
+      tdName.textContent = String(server.name || '');
+
+      const tdDisplay = document.createElement('td');
+      tdDisplay.className = 'px-3 py-2 whitespace-nowrap';
+      tdDisplay.textContent = String(server.displayName || '');
+
+      const tdBase = document.createElement('td');
+      tdBase.className = 'px-3 py-2 font-mono whitespace-nowrap';
+      tdBase.textContent = base;
+
+      const tdVersion = document.createElement('td');
+      tdVersion.className = 'px-3 py-2 whitespace-nowrap';
+      if (normalizeGoProxyProbeState(state) === 'checking') tdVersion.textContent = '检测中';
+      else if (normalizeGoProxyProbeState(state) === 'online') tdVersion.textContent = (probe && probe.version ? String(probe.version) : '未知');
+      else tdVersion.textContent = '异常';
+
+      const tdStatus = document.createElement('td');
+      tdStatus.className = 'px-3 py-2 whitespace-nowrap';
+      tdStatus.appendChild(buildGoProxyProbeTag(state));
+
+      const tdActions = document.createElement('td');
+      tdActions.className = 'px-3 py-2 whitespace-nowrap';
+      const actWrap = createEl('div', { className: 'flex items-center gap-2' });
+
+      const isEditingRow = !!(editingKey && baseKey && editingKey === baseKey);
+      const editBtn = createEl('button', { className: 'btn-ghost-blue', text: isEditingRow ? '取消' : '修改' });
+      editBtn.type = 'button';
+      editBtn.setAttribute('data-goproxy-action', isEditingRow ? 'cancel' : 'edit');
+      editBtn.setAttribute('data-goproxy-base', base);
+
+      const delBtn = createEl('button', { className: 'btn-ghost-red', text: '删除' });
       delBtn.type = 'button';
-      delBtn.className =
-        'px-3 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 bg-white/60 dark:bg-white/5 text-xs text-gray-700 dark:text-gray-100 hover:bg-gray-100/50 dark:hover:bg-white/10 transition-colors duration-150';
-      delBtn.textContent = '删除';
-      delBtn.addEventListener('click', () => {
-        goProxyServers = goProxyServers.filter((_s, i) => i !== idx);
-        renderGoProxyServerList();
-      });
+      delBtn.setAttribute('data-goproxy-action', 'delete');
+      delBtn.setAttribute('data-goproxy-base', base);
 
-      li.appendChild(baseSpan);
-      li.appendChild(toggles);
-      li.appendChild(delBtn);
-      goProxyServerList.appendChild(li);
+      actWrap.appendChild(editBtn);
+      actWrap.appendChild(delBtn);
+      tdActions.appendChild(actWrap);
+
+      tr.appendChild(tdName);
+      tr.appendChild(tdDisplay);
+      tr.appendChild(tdBase);
+      tr.appendChild(tdVersion);
+      tr.appendChild(tdStatus);
+      tr.appendChild(tdActions);
+      goProxyServerTableBody.appendChild(tr);
+
+      if (isEditingRow && goProxyServerEditor) {
+        const editorRow = document.createElement('tr');
+        const editorTd = document.createElement('td');
+        editorTd.colSpan = 6;
+        editorTd.className = 'px-3 py-2';
+        editorRow.appendChild(editorTd);
+        try {
+          goProxyServerEditor.style.width = '100%';
+        } catch (_e) {}
+        editorTd.appendChild(goProxyServerEditor);
+        goProxyServerTableBody.appendChild(editorRow);
+      }
     });
+
+    if (goProxyEditorMode !== 'edit') {
+      restoreGoProxyServerEditorHome();
+    } else if (goProxyServerEditor && !goProxyServerEditor.parentNode) {
+      restoreGoProxyServerEditorHome();
+    }
+  };
+
+  const probeGoProxyVersion = async (base, { timeoutMs = 4000 } = {}) => {
+    const normalized = normalizeHttpBase(base);
+    if (!normalized) return { ok: false };
+    const key = normalized.toLowerCase();
+    const prev = goProxyProbes.has(key) ? goProxyProbes.get(key) : null;
+    goProxyProbes.set(key, { state: 'checking', version: '', checkedAt: prev && prev.checkedAt ? prev.checkedAt : 0 });
+    renderGoProxyServerTable();
+
+    const baseWithSlash = `${normalized}/`;
+    const url = new URL('version', baseWithSlash).toString();
+    const ms = Number.isFinite(Number(timeoutMs)) ? Math.max(0, Math.trunc(Number(timeoutMs))) : 0;
+    const controller = ms > 0 && typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), ms) : null;
+    try {
+      const { resp, data } = await fetchJsonSafe(
+        url,
+        { method: 'GET', credentials: 'omit', signal: controller ? controller.signal : undefined },
+        {}
+      );
+      if (resp && resp.ok) {
+        const version = data && typeof data.version === 'string' ? data.version.trim() : '';
+        goProxyProbes.set(key, { state: 'online', version, checkedAt: Date.now() });
+        renderGoProxyServerTable();
+        return { ok: true, version };
+      }
+      goProxyProbes.set(key, { state: 'offline', version: '', checkedAt: Date.now() });
+      renderGoProxyServerTable();
+      return { ok: false };
+    } catch (_e) {
+      goProxyProbes.set(key, { state: 'offline', version: '', checkedAt: Date.now() });
+      renderGoProxyServerTable();
+      return { ok: false };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
+  const probeAllGoProxyVersions = async () => {
+    const servers = Array.isArray(goProxyServers) ? goProxyServers : [];
+    await Promise.all(
+      servers
+        .map((s) => (s && typeof s.base === 'string' ? normalizeHttpBase(s.base) : ''))
+        .filter(Boolean)
+        .map((b) => probeGoProxyVersion(b, { timeoutMs: 4000 }))
+    );
   };
 
 
@@ -4997,7 +5156,10 @@ export function initDashboardPage(bootstrap = {}) {
           safeParseJsonArray(settings.goProxyServersJson || settings.goProxyServers || '[]')
         );
         goProxyServers = parsedServers;
-        renderGoProxyServerList();
+        goProxyServers.forEach((s) => ensureGoProxyProbeEntry(s && s.base));
+        writeGoProxyServersJson();
+        renderGoProxyServerTable();
+        probeAllGoProxyVersions().catch(() => {});
 	      }
 	      panelLoaded.interface = true;
     } finally {
@@ -5490,24 +5652,233 @@ export function initDashboardPage(bootstrap = {}) {
   });
 
   bindOnce(goProxySettingsForm, () => {
-    if (goProxyServerAdd && goProxyServerInput) {
+    if (goProxyServerEditor && !goProxyServerEditorHomeParent) {
+      goProxyServerEditorHomeParent = goProxyServerEditor.parentNode;
+      goProxyServerEditorHomeNextSibling = goProxyServerEditor.nextSibling;
+    }
+
+    const setEditorStatus = bindInlineStatus(goProxyServerEditorStatus);
+
+    const setEditorConfirmEnabled = (enabled) => {
+      if (!goProxyServerEditorConfirm) return;
+      goProxyServerEditorConfirm.disabled = !enabled;
+      if (enabled) {
+        goProxyServerEditorConfirm.classList.add('btn-green');
+        goProxyServerEditorConfirm.classList.remove('btn-add');
+      } else {
+        goProxyServerEditorConfirm.classList.add('btn-add');
+        goProxyServerEditorConfirm.classList.remove('btn-green');
+      }
+    };
+
+    const hideEditor = () => {
+      restoreGoProxyServerEditorHome();
+      goProxyEditorMode = 'hidden';
+      goProxyEditorEditingKey = '';
+      if (goProxyServerEditor) goProxyServerEditor.classList.add('hidden');
+      if (goProxyServerEditorName) goProxyServerEditorName.value = '';
+      if (goProxyServerEditorDisplayName) goProxyServerEditorDisplayName.value = '';
+      if (goProxyServerEditorBase) goProxyServerEditorBase.value = '';
+      setEditorStatus('', '');
+      setEditorConfirmEnabled(false);
+      if (goProxyServerAdd) goProxyServerAdd.textContent = '添加';
+      if (goProxyServerEditorConfirm) goProxyServerEditorConfirm.textContent = '添加';
+    };
+
+    const showEditorAdd = () => {
+      restoreGoProxyServerEditorHome();
+      goProxyEditorMode = 'add';
+      goProxyEditorEditingKey = '';
+      if (goProxyServerEditor) goProxyServerEditor.classList.remove('hidden');
+      if (goProxyServerEditorName) goProxyServerEditorName.value = '';
+      if (goProxyServerEditorDisplayName) goProxyServerEditorDisplayName.value = '';
+      if (goProxyServerEditorBase) goProxyServerEditorBase.value = '';
+      setEditorStatus('', '');
+      setEditorConfirmEnabled(false);
+      if (goProxyServerAdd) goProxyServerAdd.textContent = '取消';
+      if (goProxyServerEditorConfirm) goProxyServerEditorConfirm.textContent = '添加';
+      try {
+        if (goProxyServerEditorName) goProxyServerEditorName.focus();
+      } catch (_e) {}
+    };
+
+    const showEditorEdit = (server) => {
+      const base = server && typeof server.base === 'string' ? server.base : '';
+      const key = base ? base.toLowerCase() : '';
+      if (!key) return;
+      goProxyEditorMode = 'edit';
+      goProxyEditorEditingKey = key;
+      if (goProxyServerEditor) goProxyServerEditor.classList.remove('hidden');
+      if (goProxyServerEditorName) goProxyServerEditorName.value = String(server.name || '');
+      if (goProxyServerEditorDisplayName) goProxyServerEditorDisplayName.value = String(server.displayName || '');
+      if (goProxyServerEditorBase) goProxyServerEditorBase.value = String(server.base || '');
+      setEditorStatus('', '');
+      if (goProxyServerAdd) goProxyServerAdd.textContent = '添加';
+      if (goProxyServerEditorConfirm) goProxyServerEditorConfirm.textContent = '确定';
+      syncEditorConfirmState();
+      renderGoProxyServerTable();
+      try {
+        if (goProxyServerEditorName) goProxyServerEditorName.focus();
+      } catch (_e) {}
+    };
+
+    const getEditorDraft = () => {
+      const name = goProxyServerEditorName ? String(goProxyServerEditorName.value || '').trim() : '';
+      const displayName = goProxyServerEditorDisplayName ? String(goProxyServerEditorDisplayName.value || '').trim() : '';
+      const baseRaw = goProxyServerEditorBase ? String(goProxyServerEditorBase.value || '').trim() : '';
+      const base = normalizeHttpBase(baseRaw);
+      return { name, displayName, baseRaw, base };
+    };
+
+    const validateEditorDraft = (draft) => {
+      if (!draft.name) return { ok: false, message: '' };
+      if (!draft.base) return { ok: false, message: '' };
+      return { ok: true, message: '' };
+    };
+
+    const syncEditorConfirmState = () => {
+      if (!goProxyServerEditorConfirm) return;
+      const draft = getEditorDraft();
+      const v = validateEditorDraft(draft);
+      setEditorConfirmEnabled(!!v.ok);
+    };
+
+    if (goProxyServerEditorName) goProxyServerEditorName.addEventListener('input', () => {
+      setEditorStatus('', '');
+      syncEditorConfirmState();
+    });
+    if (goProxyServerEditorDisplayName) goProxyServerEditorDisplayName.addEventListener('input', () => {
+      setEditorStatus('', '');
+      syncEditorConfirmState();
+    });
+    if (goProxyServerEditorBase) goProxyServerEditorBase.addEventListener('input', () => {
+      setEditorStatus('', '');
+      syncEditorConfirmState();
+    });
+
+    if (goProxyServerAdd) {
       goProxyServerAdd.addEventListener('click', () => {
-        const normalized = normalizeHttpBase(goProxyServerInput.value);
-        if (!normalized) {
-          setGoProxyStatus('error', '服务器地址不是合法 URL');
+        if (goProxyEditorMode === 'add') {
+          hideEditor();
+          renderGoProxyServerTable();
           return;
         }
-        setGoProxyStatus('', '');
-        const exists = goProxyServers.some((s) => (s && s.base ? s.base.toLowerCase() : '') === normalized.toLowerCase());
-        if (exists) {
-          goProxyServerInput.value = '';
+        showEditorAdd();
+      });
+    }
+
+    if (goProxyServerEditorCancel) {
+      goProxyServerEditorCancel.addEventListener('click', () => {
+        hideEditor();
+        renderGoProxyServerTable();
+      });
+    }
+
+    const findServerIndexByBaseKey = (baseKey) => {
+      const key = String(baseKey || '').toLowerCase();
+      if (!key) return -1;
+      return goProxyServers.findIndex((s) => (s && typeof s.base === 'string' ? s.base.toLowerCase() : '') === key);
+    };
+
+    const isBaseTaken = (baseKey, { exceptKey = '' } = {}) => {
+      const key = String(baseKey || '').toLowerCase();
+      if (!key) return false;
+      const ex = String(exceptKey || '').toLowerCase();
+      return goProxyServers.some((s) => {
+        const b = s && typeof s.base === 'string' ? s.base.toLowerCase() : '';
+        if (!b) return false;
+        if (ex && b === ex) return false;
+        return b === key;
+      });
+    };
+
+    if (goProxyServerEditorConfirm) {
+      goProxyServerEditorConfirm.addEventListener('click', async () => {
+        const draft = getEditorDraft();
+        if (!draft.name) {
+          setEditorStatus('error', '名称不能为空');
           return;
         }
-        goProxyServers = normalizeGoProxyServers(
-          goProxyServers.concat([{ base: normalized, pans: { baidu: true, quark: true } }])
-        );
-        renderGoProxyServerList();
-        goProxyServerInput.value = '';
+        if (!draft.base) {
+          setEditorStatus('error', '接口地址不是合法 URL');
+          return;
+        }
+
+        const baseKey = draft.base.toLowerCase();
+        const displayName = draft.displayName || draft.name;
+
+        if (goProxyEditorMode === 'add') {
+          if (isBaseTaken(baseKey)) {
+            setEditorStatus('error', '服务器已存在');
+            return;
+          }
+          goProxyServers = normalizeGoProxyServers(
+            goProxyServers.concat([{ name: draft.name, displayName, base: draft.base, pans: { baidu: true, quark: true } }])
+          );
+          ensureGoProxyProbeEntry(draft.base);
+          writeGoProxyServersJson();
+          hideEditor();
+          renderGoProxyServerTable();
+          probeGoProxyVersion(draft.base, { timeoutMs: 4000 }).catch(() => {});
+          return;
+        }
+
+        if (goProxyEditorMode === 'edit') {
+          const idx = findServerIndexByBaseKey(goProxyEditorEditingKey);
+          if (idx < 0) {
+            hideEditor();
+            return;
+          }
+          if (isBaseTaken(baseKey, { exceptKey: goProxyEditorEditingKey })) {
+            setEditorStatus('error', '接口地址已被占用');
+            return;
+          }
+          const prev = goProxyServers[idx];
+          const next = goProxyServers.slice();
+          next[idx] = {
+            name: draft.name,
+            displayName,
+            base: draft.base,
+            pans: prev && prev.pans ? prev.pans : { baidu: true, quark: true },
+          };
+          goProxyServers = normalizeGoProxyServers(next);
+          ensureGoProxyProbeEntry(draft.base);
+          writeGoProxyServersJson();
+          hideEditor();
+          renderGoProxyServerTable();
+          probeGoProxyVersion(draft.base, { timeoutMs: 4000 }).catch(() => {});
+        }
+      });
+    }
+
+    if (goProxyServerTableBody) {
+      goProxyServerTableBody.addEventListener('click', (e) => {
+        const target = e && e.target && e.target.closest ? e.target.closest('button[data-goproxy-action]') : null;
+        if (!target) return;
+        const action = String(target.getAttribute('data-goproxy-action') || '');
+        const base = String(target.getAttribute('data-goproxy-base') || '');
+        const baseKey = base ? base.toLowerCase() : '';
+        if (!baseKey) return;
+        if (action === 'cancel') {
+          if (goProxyEditorMode === 'edit' && goProxyEditorEditingKey === baseKey) {
+            hideEditor();
+            renderGoProxyServerTable();
+          }
+          return;
+        }
+        if (action === 'delete') {
+          goProxyServers = goProxyServers.filter((s) => (s && s.base ? s.base.toLowerCase() : '') !== baseKey);
+          goProxyProbes.delete(baseKey);
+          if (goProxyEditorMode === 'edit' && goProxyEditorEditingKey === baseKey) hideEditor();
+          writeGoProxyServersJson();
+          renderGoProxyServerTable();
+          return;
+        }
+        if (action === 'edit') {
+          const idx = findServerIndexByBaseKey(baseKey);
+          if (idx < 0) return;
+          showEditorEdit(goProxyServers[idx]);
+        }
       });
     }
 
@@ -5517,8 +5888,7 @@ export function initDashboardPage(bootstrap = {}) {
 	      goProxySaving = true;
 	      setGoProxyStatus('', '保存中...');
 	      try {
-        const serversJson = JSON.stringify(goProxyServers || []);
-        if (goProxyServersJsonInput) goProxyServersJsonInput.value = serversJson;
+        const serversJson = writeGoProxyServersJson();
         const { resp, data } = await postForm(goProxySettingsForm.action, {
           goProxyEnabled: goProxyEnabledInput && goProxyEnabledInput.checked ? '1' : '0',
           goProxyAutoSelect: goProxyAutoSelectInput && goProxyAutoSelectInput.checked ? '1' : '0',
@@ -5535,6 +5905,11 @@ export function initDashboardPage(bootstrap = {}) {
         goProxySaving = false;
       }
     });
+
+    renderGoProxyServerTable();
+    if (goProxyServerEditor && !goProxyServerEditor.classList.contains('hidden') && goProxyEditorMode === 'hidden') {
+      hideEditor();
+    }
   });
 
 
