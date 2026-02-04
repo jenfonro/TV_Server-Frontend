@@ -432,7 +432,6 @@
 						                  class="tv-field"
 						                  required
 						                  autocomplete="off"
-						                  :value="bootstrap.settings.catPawOpenName"
 						                >
 							              </div>
 					              <div id="catPawOpenApiRow" class="hidden">
@@ -441,7 +440,6 @@
 					                  name="catPawOpenApiBase"
 					                  class="tv-field"
 					                  placeholder="http://127.0.0.1:9988"
-					                  :value="bootstrap.settings.catPawOpenApiBase"
 					                >
 						              </div>
 					              <div id="catPawOpenSyncFromServerRow" class="hidden">

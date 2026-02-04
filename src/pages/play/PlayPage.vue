@@ -1659,8 +1659,7 @@ const magicEpisodeCleanRegexRules = computed(() => {
   if (Array.isArray(listRaw)) {
     return listRaw.map((x) => (typeof x === 'string' ? x.trim() : '')).filter(Boolean);
   }
-  const legacy = props.bootstrap?.settings?.magicEpisodeCleanRegex != null ? String(props.bootstrap.settings.magicEpisodeCleanRegex).trim() : '';
-  return legacy ? [legacy] : [];
+  return [];
 });
 
 // Users often paste patterns that contain doubled backslashes like `\\d` (from JSON/JS literals).

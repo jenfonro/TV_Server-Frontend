@@ -112,6 +112,36 @@ export function initDashboardPage(bootstrap = {}) {
   let syncCatPawOpenServerAddModeButtons = () => {};
   let cancelCatPawOpenServerAddMode = async () => {};
 
+  const normalizeCatPawOpenServers = (raw) => {
+    const list = Array.isArray(raw) ? raw : [];
+    const out = [];
+    list.forEach((it) => {
+      const n = it && typeof it.name === 'string' ? it.name.trim() : '';
+      const a = it && typeof it.apiBase === 'string' ? String(it.apiBase || '').trim() : '';
+      if (!n || !a) return;
+      out.push({ name: n, apiBase: a });
+    });
+    return out;
+  };
+
+  const pickCatPawOpenActiveKey = (servers, desired) => {
+    const list = Array.isArray(servers) ? servers : [];
+    const k = typeof desired === 'string' ? desired.trim() : '';
+    if (k) {
+      const hit = list.find((s) => s && s.name === k);
+      if (hit) return hit.name;
+    }
+    return list[0] ? list[0].name : '';
+  };
+
+  const resolveCatPawOpenApiBaseFromSettings = (settings) => {
+    const servers = normalizeCatPawOpenServers(settings && settings.catPawOpenServers);
+    const active = settings && typeof settings.catPawOpenActive === 'string' ? settings.catPawOpenActive : '';
+    const key = pickCatPawOpenActiveKey(servers, active);
+    const server = servers.find((s) => s && s.name === key) || servers[0];
+    return server && server.apiBase ? String(server.apiBase || '').trim() : '';
+  };
+
   const normalizeTvUser = (value) => {
     const raw = value != null ? String(value) : '';
     const trimmed = raw.trim();
@@ -1215,9 +1245,7 @@ export function initDashboardPage(bootstrap = {}) {
       const attr = typeof input.getAttribute === 'function' ? String(input.getAttribute('value') || '').trim() : '';
       if (attr) return attr;
     }
-    return bootstrap && bootstrap.settings && typeof bootstrap.settings.catPawOpenApiBase === 'string'
-      ? String(bootstrap.settings.catPawOpenApiBase || '').trim()
-      : '';
+    return '';
   };
 
   const catPawOpenApiBaseCache = { t: 0, v: '', inFlight: null };
@@ -1251,7 +1279,7 @@ export function initDashboardPage(bootstrap = {}) {
     catPawOpenApiBaseCache.inFlight = (async () => {
       try {
         const settings = await getSuccessJson('/dashboard/site/settings');
-        const base = settings && typeof settings.catPawOpenApiBase === 'string' ? settings.catPawOpenApiBase.trim() : '';
+        const base = resolveCatPawOpenApiBaseFromSettings(settings);
         catPawOpenApiBaseCache.v = base;
         catPawOpenApiBaseCache.t = Date.now();
         if (base) {
@@ -4784,23 +4812,11 @@ export function initDashboardPage(bootstrap = {}) {
           };
 
           const normalizeServers = (raw) => {
-            const list = Array.isArray(raw) ? raw : [];
-            const out = [];
-            list.forEach((it) => {
-              const n = it && typeof it.name === 'string' ? it.name.trim() : '';
-              const a = it && typeof it.apiBase === 'string' ? String(it.apiBase || '').trim() : '';
-              if (!n || !a) return;
-              out.push({ name: n, apiBase: a });
-            });
-            return out;
+            return normalizeCatPawOpenServers(raw);
           };
 
           catPawOpenServers = normalizeServers(settings.catPawOpenServers);
-          if (!catPawOpenServers.length) {
-            const legacyName = typeof settings.catPawOpenName === 'string' ? settings.catPawOpenName.trim() : '';
-            const legacyBase = typeof settings.catPawOpenApiBase === 'string' ? settings.catPawOpenApiBase.trim() : '';
-            if (legacyName && legacyBase) catPawOpenServers = [{ name: legacyName, apiBase: legacyBase }];
-          }
+          const initialKey = pickCatPawOpenActiveKey(catPawOpenServers, settings.catPawOpenActive);
 
           const syncCustomDropdownDisplayOnly = (sel) => {
             if (!sel) return;
@@ -4968,7 +4984,7 @@ export function initDashboardPage(bootstrap = {}) {
 
 	          renderServerOptions();
 	          if (catPawOpenServers.length) {
-	            await selectServer(catPawOpenServers[0].name, { refreshRemote: true });
+	            await selectServer(initialKey, { refreshRemote: true });
 	          } else {
             if (nameInput) nameInput.value = '';
             if (apiInput) apiInput.value = '';
