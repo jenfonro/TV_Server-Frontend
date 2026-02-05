@@ -1837,6 +1837,7 @@ export function initDashboardPage(bootstrap = {}) {
   const panSettingDefs = [
     { key: 'baidu', name: '百度', type: 'cookie' },
     { key: 'quark', name: '夸克', type: 'cookie' },
+    { key: 'quark_tv', name: '夸克TV', type: 'quark_tv' },
     { key: 'tianyi', name: '天翼', type: 'account' },
     { key: '139', name: '移动', type: 'authorization' },
     { key: 'uc', name: 'UC', type: 'cookie' },
@@ -2327,8 +2328,15 @@ export function initDashboardPage(bootstrap = {}) {
     return savePanSettings(key, 'authorization', { authorization: authorization != null ? String(authorization) : '' });
   };
 
+  const savePanQuarkTv = async (key, refreshToken, deviceId) => {
+    return savePanSettings(key, 'quark_tv', {
+      refresh_token: refreshToken != null ? String(refreshToken) : '',
+      device_id: deviceId != null ? String(deviceId) : '',
+    });
+  };
+
   const savePanSettings = async (key, type, fields) => {
-    const t = type === 'account' || type === 'authorization' || type === 'cookie' ? type : 'cookie';
+    const t = type === 'account' || type === 'authorization' || type === 'cookie' || type === 'quark_tv' ? type : 'cookie';
     const payload = Object.assign({ key, type: t }, fields && typeof fields === 'object' ? fields : {});
     const { resp, data } = await postForm('/dashboard/pan/settings', payload);
     if (resp.ok && data && data.success) return { ok: true, settings: data.settings || {} };
@@ -2356,12 +2364,18 @@ export function initDashboardPage(bootstrap = {}) {
         const typ = typeByKey.get(key);
         const remoteKey = key;
         const cur = v && typeof v === 'object' ? v : {};
-        // CatPawOpen `/admin/pan/sync` only accepts {cookie} or {username,password}.
+        // CatPawOpen `/admin/pan/sync` accepts:
+        // - {cookie} or {username,password} for online runtime sync
+        // - {authorization} for builtin 139 resolver
+        // - {refresh_token, device_id} for builtin quark_tv resolver
         // For "authorization" types, send it as a cookie-equivalent value.
         const payload = {};
         if (typ === 'account') {
           if (typeof cur.username === 'string') payload.username = cur.username;
           if (typeof cur.password === 'string') payload.password = cur.password;
+        } else if (typ === 'quark_tv') {
+          if (typeof cur.refresh_token === 'string') payload.refresh_token = cur.refresh_token;
+          if (typeof cur.device_id === 'string') payload.device_id = cur.device_id;
         } else if (typ === 'authorization') {
           if (typeof cur.authorization === 'string') payload.authorization = cur.authorization;
         } else {
@@ -2515,6 +2529,48 @@ export function initDashboardPage(bootstrap = {}) {
 	    const def = panSettingDefs.find((d) => d.key === activePanSettingKey) || panSettingDefs[0];
 	    if (!def) return;
 	    panSettingsContent.innerHTML = '';
+
+	    if (def.type === 'quark_tv') {
+	      const v = getPanSettingValue(def.key);
+	      const form = createEl('div', { className: 'space-y-4 max-w-[640px]' });
+
+	      const rtRow = createEl('div');
+	      const rtLabel = createEl('label', {
+	        className: 'block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1',
+	        text: '刷新令牌',
+	      });
+	      const rtInput = createEl('input', { className: 'tv-field' });
+	      rtInput.type = 'text';
+	      rtInput.autocomplete = 'off';
+	      rtInput.value = (v.refresh_token || '').toString();
+	      rtInput.setAttribute('data-pan-quarktv-refresh-token', def.key);
+	      rtRow.appendChild(rtLabel);
+	      rtRow.appendChild(rtInput);
+
+	      const devRow = createEl('div');
+	      const devLabel = createEl('label', {
+	        className: 'block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1',
+	        text: '设备ID',
+	      });
+	      const devInput = createEl('input', { className: 'tv-field' });
+	      devInput.type = 'text';
+	      devInput.autocomplete = 'off';
+	      devInput.value = (v.device_id || '').toString();
+	      devInput.setAttribute('data-pan-quarktv-device-id', def.key);
+	      devRow.appendChild(devLabel);
+	      devRow.appendChild(devInput);
+
+	      const saveBtn = createEl('button', { className: 'btn-green', text: '保存' });
+	      saveBtn.type = 'button';
+	      saveBtn.setAttribute('data-pan-action', 'save-quark-tv');
+	      saveBtn.setAttribute('data-pan-key', def.key);
+
+	      form.appendChild(rtRow);
+	      form.appendChild(devRow);
+	      form.appendChild(saveBtn);
+	      panSettingsContent.appendChild(form);
+	      return;
+	    }
 
 	    if (def.type === 'cookie' || def.type === 'authorization') {
         const isAuthorization = def.type === 'authorization';
@@ -2817,6 +2873,18 @@ export function initDashboardPage(bootstrap = {}) {
         await savePanLoginSettingToServer({
           key,
           save: () => savePanCookie(key, value),
+        });
+        return;
+      }
+
+      if (action === 'save-quark-tv') {
+        const rtEl = panSettingsContent.querySelector(`input[data-pan-quarktv-refresh-token="${key}"]`);
+        const devEl = panSettingsContent.querySelector(`input[data-pan-quarktv-device-id="${key}"]`);
+        const refreshToken = rtEl ? rtEl.value : '';
+        const deviceId = devEl ? devEl.value : '';
+        await savePanLoginSettingToServer({
+          key,
+          save: () => savePanQuarkTv(key, refreshToken, deviceId),
         });
         return;
       }
