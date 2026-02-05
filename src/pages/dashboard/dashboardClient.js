@@ -20,7 +20,6 @@ export function initDashboardPage(bootstrap = {}) {
   const panSettingsScrollRight = document.getElementById('panSettingsScrollRight');
   const openListSettingsForm = document.getElementById('openListSettingsForm');
   const openListSaveStatus = document.getElementById('openListSaveStatus');
-  const openListQuarkTvModeInput = document.getElementById('openListQuarkTvMode');
 
   const goProxySettingsForm = document.getElementById('goProxySettingsForm');
   const goProxySaveStatus = document.getElementById('goProxySaveStatus');
@@ -1327,66 +1326,6 @@ export function initDashboardPage(bootstrap = {}) {
   const normalizeHttpBaseWithSlash = (value) => {
     const b = normalizeHttpBase(value);
     return b ? `${b}/` : '';
-  };
-
-  const normalizeOpenListMountPath = (value) => {
-    const raw = typeof value === 'string' ? value.trim() : '';
-    if (!raw) return '';
-    let p = raw;
-    if (!p.startsWith('/')) p = `/${p}`;
-    if (!p.endsWith('/')) p = `${p}/`;
-    // Collapse duplicate slashes, but keep "http(s)://" out of scope since this is a path.
-    p = p.replace(/\/{2,}/g, '/');
-    return p;
-  };
-
-  const validateOpenListMount = async ({ apiBase, token, mountPath }) => {
-    const baseWithSlash = normalizeHttpBaseWithSlash(apiBase);
-    if (!baseWithSlash) throw new Error('OpenList 服务器地址不是合法 URL');
-    const t = typeof token === 'string' ? token.trim() : '';
-    if (!t) throw new Error('OpenList 令牌未设置');
-    const mount = normalizeOpenListMountPath(mountPath);
-    if (!mount) throw new Error('夸克TV挂载目录未设置');
-    const url = new URL('api/fs/get', baseWithSlash).toString();
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: t },
-      body: JSON.stringify({
-        path: mount,
-        password: '',
-        page: 1,
-        per_page: 0,
-        refresh: true,
-      }),
-      credentials: 'omit',
-    });
-
-    if (resp.status === 401) {
-      const err = new Error('OpenList 令牌错误');
-      err.status = 401;
-      throw err;
-    }
-    if (resp.status === 500) {
-      const err = new Error('夸克TV挂载目录错误');
-      err.status = 500;
-      throw err;
-    }
-
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      const msg = data && data.message ? String(data.message) : `HTTP ${resp.status}`;
-      const err = new Error(msg);
-      err.status = resp.status;
-      throw err;
-    }
-    const code = data && typeof data.code === 'number' ? data.code : 0;
-    if (code !== 200) {
-      const msg = data && data.message ? String(data.message) : '验证失败';
-      const err = new Error(msg);
-      err.status = resp.status;
-      throw err;
-    }
-    return { ok: true };
   };
 
   const normalizeGoProxyProbeState = (v) => {
@@ -5318,11 +5257,6 @@ export function initDashboardPage(bootstrap = {}) {
           ? openListSettingsForm.querySelector('input[name="openListToken"]')
           : null;
         if (openListTokenInput) openListTokenInput.value = settings.openListToken || '';
-        if (openListQuarkTvModeInput) openListQuarkTvModeInput.checked = !!settings.openListQuarkTvMode;
-        const openListMountInput = openListSettingsForm
-          ? openListSettingsForm.querySelector('input[name="openListQuarkTvMount"]')
-          : null;
-        if (openListMountInput) openListMountInput.value = settings.openListQuarkTvMount || '';
 
         if (goProxyEnabledInput) goProxyEnabledInput.checked = !!settings.goProxyEnabled;
         if (goProxyAutoSelectInput) goProxyAutoSelectInput.checked = !!settings.goProxyAutoSelect;
@@ -5777,23 +5711,12 @@ export function initDashboardPage(bootstrap = {}) {
       try {
         const apiInput = openListSettingsForm.querySelector('input[name="openListApiBase"]');
         const tokenInput = openListSettingsForm.querySelector('input[name="openListToken"]');
-        const mountInput = openListSettingsForm.querySelector('input[name="openListQuarkTvMount"]');
-        const tvMode = !!(openListQuarkTvModeInput && openListQuarkTvModeInput.checked);
 
         const apiBaseRaw = apiInput && typeof apiInput.value === 'string' ? apiInput.value : '';
         const tokenRaw = tokenInput && typeof tokenInput.value === 'string' ? tokenInput.value : '';
-        const mountRaw = mountInput && typeof mountInput.value === 'string' ? mountInput.value : '';
 
         const normalizedBaseWithSlash = normalizeHttpBaseWithSlash(apiBaseRaw);
         if (apiInput) apiInput.value = normalizedBaseWithSlash;
-        const normalizedMount = normalizeOpenListMountPath(mountRaw);
-        if (mountInput) mountInput.value = normalizedMount;
-
-        const hasAny =
-          !!normalizedBaseWithSlash ||
-          !!String(tokenRaw || '').trim() ||
-          !!normalizedMount ||
-          tvMode;
 
         const { resp, data } = await postForm(openListSettingsForm.action, formToFields(openListSettingsForm));
         const savedOk = !!(resp && resp.ok && data && data.success);
@@ -5802,21 +5725,7 @@ export function initDashboardPage(bootstrap = {}) {
           return;
         }
 
-        if (hasAny) {
-          try {
-            await validateOpenListMount({
-              apiBase: normalizedBaseWithSlash,
-              token: tokenRaw,
-              mountPath: normalizedMount,
-            });
-            setOpenListStatus('success', '保存成功');
-          } catch (err) {
-            const msg = err && err.message ? String(err.message) : '验证失败';
-            setOpenListStatus('error', `${msg}（已保存）`);
-          }
-        } else {
-          setOpenListStatus('success', '保存成功');
-        }
+        setOpenListStatus('success', '保存成功');
       } catch (_e) {
         setOpenListStatus('error', '保存失败');
       } finally {

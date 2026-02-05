@@ -714,24 +714,6 @@
 	                  :value="bootstrap.settings.openListToken"
 	                >
 	              </div>
-	              <div class="space-y-1 pt-1">
-	                <div class="text-sm font-medium text-gray-700 dark:text-gray-200">夸克 TV 模式</div>
-	                <div>
-	                  <label class="enable-switch" title="夸克 TV 模式">
-	                    <input id="openListQuarkTvMode" name="openListQuarkTvMode" type="checkbox" />
-	                    <span class="enable-slider"></span>
-	                  </label>
-	                </div>
-	              </div>
-	              <div>
-	                <label class="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">夸克 TV 挂载目录</label>
-	                <input
-	                  name="openListQuarkTvMount"
-	                  class="tv-field"
-	                  placeholder="/quark/"
-	                  :value="bootstrap.settings.openListQuarkTvMount"
-	                >
-	              </div>
 	              <div class="pt-1 flex justify-start">
 	                <button type="submit" class="btn-green">保存</button>
 	              </div>

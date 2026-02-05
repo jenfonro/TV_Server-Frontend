@@ -2396,108 +2396,10 @@ const normalizeHttpBaseWithSlash = (value) => {
   return b ? `${b}/` : '';
 };
 
-const sanitizeTvUsername = (input) => {
-  const raw = String(input || '').trim();
-  if (!raw) return 'admin';
-  const safe = raw.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '');
-  return safe || 'admin';
-};
-
 const isWodePanVideoId = (videoId) => {
   const id = String(videoId || '').trim();
   if (!id) return false;
   return /######wodepan$/i.test(id);
-};
-
-const getDefaultQuarkTvUserDir = (tvUser) => {
-  const user = sanitizeTvUsername(tvUser);
-  return `MeowFilm/${user}`;
-};
-
-const normalizeOpenListMountPath = (value) => {
-  const raw = typeof value === 'string' ? value.trim() : '';
-  if (!raw) return '';
-  let p = raw;
-  if (!p.startsWith('/')) p = `/${p}`;
-  if (!p.endsWith('/')) p = `${p}/`;
-  p = p.replace(/\/{2,}/g, '/');
-  return p;
-};
-
-const normalizeOpenListFileName = (value) => {
-  const raw = typeof value === 'string' ? value.trim() : '';
-  if (!raw) return '';
-  let s = raw;
-  // Strip leading size prefix like: [1.11 GB]xxx.mp4 / 【1.11GB】xxx.mp4 / (1.11 GB) xxx.mp4
-  s = s.replace(
-    /^\s*[\[\(【（]\s*\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB|PB|KIB|MIB|GIB|TIB|PIB)\s*[\]\)】）]\s*/i,
-    ''
-  );
-  // Some scripts use "1.11 GB - xxx.mp4"
-  s = s.replace(/^\s*\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB|PB|KIB|MIB|GIB|TIB|PIB)\s*-\s*/i, '');
-  return s.trim().replace(/^\/+|\/+$/g, '');
-};
-
-const isQuarkPanLabel = (label) => {
-  const s = typeof label === 'string' ? label : '';
-  if (!s) return false;
-  if (s.includes('夸克')) return true;
-  if (s.includes('夸父')) return true;
-  const lower = s.toLowerCase();
-  return lower.includes('quark') || lower.includes('kuafu');
-};
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-const withRetries = async (attempts, fn) => {
-  const n = Number(attempts);
-  const max = Number.isFinite(n) ? Math.max(1, Math.floor(n)) : 1;
-  let lastErr = null;
-  for (let i = 0; i < max; i += 1) {
-    try {
-      // 0ms / 300ms / 800ms
-      if (i === 1) await sleep(300);
-      if (i === 2) await sleep(800);
-      return await fn(i + 1);
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr || new Error('retry failed');
-};
-
-const openListRefreshPath = async ({ apiBase, token, path }) => {
-  const base = normalizeHttpBaseWithSlash(apiBase);
-  if (!base) throw new Error('openlist base invalid');
-  const t = typeof token === 'string' ? token.trim() : '';
-  if (!t) throw new Error('openlist token missing');
-  const p = typeof path === 'string' ? path : '';
-  if (!p) throw new Error('openlist path missing');
-
-  const url = new URL('api/fs/get', base).toString();
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: t },
-    credentials: 'omit',
-    body: JSON.stringify({
-      path: p,
-      password: '',
-      page: 1,
-      per_page: 0,
-      refresh: true,
-    }),
-  });
-  const data = await resp.json().catch(() => ({}));
-  const code = data && typeof data.code === 'number' ? data.code : 0;
-  if (resp.ok && code === 200) {
-    const rawUrl = data && data.data && typeof data.data.raw_url === 'string' ? data.data.raw_url.trim() : '';
-    if (!rawUrl) throw new Error('missing raw_url');
-    return rawUrl;
-  }
-  const msg = (data && data.message) ? String(data.message) : `HTTP ${resp.status}`;
-  const err = new Error(msg);
-  err.status = resp.status;
-  throw err;
 };
 
 const goProxyPickState = {
@@ -2960,28 +2862,6 @@ const requestPlay = async () => {
   const panKeyAtCall = selectedPanKey.value;
   const idxAtCall = idx;
   const epNameAtCall = ep && ep.name ? String(ep.name) : '';
-  const openListFileNameAtCall = (() => {
-    const url = ep && typeof ep.url === 'string' ? ep.url : '';
-    if (url) {
-      const rawNames = extractRawNamesFromEpisodeUrl(url);
-      if (rawNames && rawNames[0]) return normalizeOpenListFileName(String(rawNames[0] || '').trim());
-    }
-    return epNameAtCall ? normalizeOpenListFileName(String(epNameAtCall).trim()) : '';
-  })();
-	  const openListDirAtCall = (() => {
-	    const raw = props.videoPanDir ? String(props.videoPanDir || '').trim() : '';
-	    const fromPayload = raw ? raw.replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/') : '';
-	    const tvUser = props.bootstrap?.user?.username || '';
-	    const fallback = getDefaultQuarkTvUserDir(tvUser);
-
-	    // Only netdisk ("我的|网盘") items should carry a real directory stack.
-	    // For normal sites, always use the per-user Quark TV folder to avoid polluting history with category breadcrumbs.
-	    if (isWodePanVideoId(props.videoId)) return fromPayload;
-
-	    if (!fromPayload) return fallback;
-	    if (fromPayload === fallback || fromPayload.startsWith(`${fallback}/`)) return fromPayload;
-	    return fallback;
-	  })();
 
   playRequestState.seq += 1;
   const seqAtCall = playRequestState.seq;
@@ -3008,14 +2888,7 @@ const requestPlay = async () => {
 		    const apiBase = (role === 'user' ? userBase : (userBase || serverBase)).trim();
 		    const tvUser = props.bootstrap?.user?.username || '';
 
-        const shouldQuarkTv =
-          !!props.bootstrap?.settings?.openListQuarkTvMode &&
-          isQuarkPanLabel(src && src.label ? String(src.label) : '') &&
-          !!props.bootstrap?.settings?.openListApiBase &&
-          !!props.bootstrap?.settings?.openListToken &&
-          !!props.bootstrap?.settings?.openListQuarkTvMount;
-
-	        const fetchPlay = async (query) => {
+	        const fetchPlay = async () => {
 	          const siteApi = String(api || '').trim();
 	          const siteId = (() => {
 	            const m = /^\/([a-f0-9]{10})\/spider\//.exec(siteApi);
@@ -3025,7 +2898,6 @@ const requestPlay = async () => {
 	            apiBase,
 	            username: tvUser,
 	            payload: { flag, id, siteApi, ...(siteId ? { siteId } : {}) },
-	            query: query && typeof query === 'object' ? query : undefined,
 	          });
 	          const rewritten = rewritePlayPayloadUrls(raw, apiBase, tvUser);
 	          const payload = normalizePlayPayload(rewritten);
@@ -3039,44 +2911,8 @@ const requestPlay = async () => {
         let finalHeaders = {};
         let disableGoProxy = false;
 
-		        if (shouldQuarkTv) {
-		          const openListApiBase = String(props.bootstrap?.settings?.openListApiBase || '');
-		          const openListToken = String(props.bootstrap?.settings?.openListToken || '');
-		          const openListMount = String(props.bootstrap?.settings?.openListQuarkTvMount || '');
-		          const mount = normalizeOpenListMountPath(openListMount);
-		          const dir = openListDirAtCall;
-		          const nameRaw = typeof openListFileNameAtCall === 'string' ? openListFileNameAtCall.trim() : '';
-		          const name = nameRaw.replace(/^\/+|\/+$/g, '');
-
-		          // In Quark TV mode, CatPawOpen expects the first request to be `play?quark_tv=1`
-		          // to perform its side-effects (e.g. preparing OpenList entries). Then we refresh OpenList.
-		          try {
-		            await fetchPlay({ quark_tv: '1' });
-		          } catch (e) {
-	            // Best-effort: even if `play?quark_tv=1` fails, still try OpenList refresh and then fall back.
-	            console.warn(
-	              '[QuarkTV] play(quark_tv=1) failed:',
-	              e && e.message ? String(e.message) : e
-	            );
-		          }
-
-		          if (name) {
-		            const refreshPath = `${mount}${dir ? `${dir}/` : ''}${name}`.replace(/\/{2,}/g, '/').replace(/\/+$/g, '');
-		            try {
-		              const rawUrlFromOpenList = await withRetries(3, async () => {
-		                return await openListRefreshPath({ apiBase: openListApiBase, token: openListToken, path: refreshPath });
-		              });
-		              if (rawUrlFromOpenList) {
-		                finalUrl = rawUrlFromOpenList;
-		                finalHeaders = {};
-		                disableGoProxy = true;
-		              }
-		            } catch (_e) {}
-		          }
-	        }
-
         if (!finalUrl) {
-          playResult = await fetchPlay(shouldQuarkTv ? { quark_tv: '0' } : undefined);
+          playResult = await fetchPlay();
           if (!playResult.url) {
             if (seqAtCall === playRequestState.seq) playError.value = '无可用播放地址';
             return;
