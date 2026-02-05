@@ -1993,7 +1993,8 @@ defineExpose({ destroy: destroyNow, pause, play, tryAutoplay });
   position: absolute;
   right: 0;
   bottom: calc(100% + 10px);
-  min-width: 160px;
+  width: max-content;
+  max-width: min(80vw, 360px);
   border-radius: 14px;
   padding: 8px;
   background: rgba(18, 18, 18, 0.92);
@@ -2003,7 +2004,9 @@ defineExpose({ destroy: destroyNow, pause, play, tryAutoplay });
 }
 
 .yt-proxy__menu--open {
-  display: block;
+  display: grid;
+  grid-auto-flow: row;
+  gap: 8px;
 }
 
 .yt-proxy__item {
@@ -2012,7 +2015,8 @@ defineExpose({ destroy: destroyNow, pause, play, tryAutoplay });
   padding: 0 10px;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
+  text-align: center;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -2020,10 +2024,6 @@ defineExpose({ destroy: destroyNow, pause, play, tryAutoplay });
   font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
-}
-
-.yt-proxy__item + .yt-proxy__item {
-  margin-top: 8px;
 }
 
 .yt-proxy__item:hover {

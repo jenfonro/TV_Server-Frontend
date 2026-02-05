@@ -2668,6 +2668,17 @@ const fetchM3U8Text = async ({ url, tvUser }) => {
   return await resp.text();
 };
 
+const hasNonEmptyHeaders = (headers) => {
+  const h = headers && typeof headers === 'object' ? headers : {};
+  return Object.keys(h).some((k) => {
+    if (!k || typeof k !== 'string') return false;
+    const v = h[k];
+    if (v == null) return false;
+    if (Array.isArray(v)) return v.some((it) => it != null && String(it).trim());
+    return String(v).trim();
+  });
+};
+
 const maybeUseCatM3U8ProxyForPlayback = async ({
   apiBase,
   tvUser,
@@ -2677,14 +2688,7 @@ const maybeUseCatM3U8ProxyForPlayback = async ({
   if (!isProbablyM3U8Url(playUrl)) return null;
   if (!apiBase) return null;
 
-  const h = playHeaders && typeof playHeaders === 'object' ? playHeaders : {};
-  const hasHeader = Object.keys(h).some((k) => {
-    if (!k || typeof k !== 'string') return false;
-    const v = h[k];
-    if (v == null) return false;
-    if (Array.isArray(v)) return v.some((it) => it != null && String(it).trim());
-    return String(v).trim();
-  });
+  const hasHeader = hasNonEmptyHeaders(playHeaders);
 
   // If server doesn't require headers, prefer direct m3u8 fetch first. If it fails (CORS/IP/anti-leech),
   // then fall back to CatPawOpen m3u8 registration + proxy rewrite.
@@ -2728,14 +2732,7 @@ const maybeUseCatM3U8ProxyForPlayback = async ({
 
 const maybeUseGoProxyForPlayback = async (playUrl, playHeaders, preferredPan = '', enabled = false) => {
   if (!enabled) return { url: playUrl, headers: playHeaders, goProxyBase: '' };
-  const h = playHeaders && typeof playHeaders === 'object' ? playHeaders : {};
-  const hasHeader = Object.keys(h).some((k) => {
-    if (!k || typeof k !== 'string') return false;
-    const v = h[k];
-    if (v == null) return false;
-    if (Array.isArray(v)) return v.some((it) => it != null && String(it).trim());
-    return String(v).trim();
-  });
+  const hasHeader = hasNonEmptyHeaders(playHeaders);
   // Only proxy when server explicitly returns playback headers (typical anti-leech/CORS cases).
   if (!hasHeader) return { url: playUrl, headers: playHeaders, goProxyBase: '' };
 
@@ -2763,16 +2760,24 @@ const maybeUseGoProxyForPlayback = async (playUrl, playHeaders, preferredPan = '
   return { url: decorated, headers: {}, goProxyBase: base };
 };
 
+const goProxyUiEligible = computed(() => {
+  const enabled = !!props.bootstrap?.settings?.goProxyEnabled;
+  if (!enabled) return false;
+  const candidate = lastGoProxyCandidate.value;
+  if (!candidate || !candidate.enabled) return false;
+  return hasNonEmptyHeaders(candidate.headers);
+});
+
 const goProxyUiOptions = computed(() => {
   const enabled = !!props.bootstrap?.settings?.goProxyEnabled;
-  if (!enabled) return [];
+  if (!enabled || !goProxyUiEligible.value) return [];
   const servers = normalizeGoProxyServers(props.bootstrap?.settings?.goProxyServers);
   return servers.map((s) => ({ base: s.base, label: s.label }));
 });
 
 const goProxyUiLabel = computed(() => {
   const enabled = !!props.bootstrap?.settings?.goProxyEnabled;
-  if (!enabled) return '';
+  if (!enabled || !goProxyUiEligible.value) return '';
   const servers = normalizeGoProxyServers(props.bootstrap?.settings?.goProxyServers);
   if (!servers.length) return '';
 
@@ -2788,6 +2793,7 @@ const goProxyUiLabel = computed(() => {
 });
 
 const onGoProxySelect = async (base) => {
+  if (!goProxyUiEligible.value) return;
   const nextBase = normalizeHttpBase(base);
   goProxyManualBase.value = nextBase;
   try {
@@ -2877,6 +2883,8 @@ const requestPlay = async () => {
     playerBuffering.value = false;
     playerPlaybackStarted.value = false;
     playerFirstFrameReady.value = false;
+    goProxyInUseBase.value = '';
+    lastGoProxyCandidate.value = null;
     if (playerFirstFrameTimer) {
       window.clearTimeout(playerFirstFrameTimer);
       playerFirstFrameTimer = 0;
