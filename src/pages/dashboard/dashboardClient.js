@@ -3253,6 +3253,7 @@ export function initDashboardPage(bootstrap = {}) {
       raw === 'valid' ||
       raw === 'invalid' ||
       raw === 'unknown' ||
+      raw === 'skipped' ||
       raw === 'unchecked' ||
       raw === 'category_error' ||
       raw === 'search_error'
@@ -3267,6 +3268,7 @@ export function initDashboardPage(bootstrap = {}) {
     if (s === 'category_error') return '分类异常';
     if (s === 'search_error') return '搜索异常';
     if (s === 'unknown') return '未知';
+    if (s === 'skipped') return '跳过';
     return '未检测';
   };
   const availabilityClassFor = (status) => {
@@ -3281,6 +3283,32 @@ export function initDashboardPage(bootstrap = {}) {
     span.className = `availability-tag ${availabilityClassFor(status)}`;
     span.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/></svg>${formatAvailabilityText(status)}`;
     return span;
+  };
+
+  const normalizeSiteNameForMatch = (name) => {
+    const raw = name != null ? String(name) : '';
+    if (!raw) return '';
+    // Remove emoji + variation selectors + zero-width.
+    let s = raw.replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\uFE0F/g, '');
+    try {
+      s = s.replace(/[\u{1F300}-\u{1FAFF}]/gu, '');
+    } catch (_e) {
+      // ignore
+    }
+    // Drop punctuation/symbols and whitespace.
+    s = s.replace(/[^\p{L}\p{N}\u4e00-\u9fff]+/gu, '');
+    return s.trim();
+  };
+
+  const shouldSkipVideoSourceCheck = (site) => {
+    const api = site && typeof site.api === 'string' ? site.api.trim() : '';
+    if (!api) return false;
+    const apiLower = api.toLowerCase();
+    const nameRaw = site && typeof site.name === 'string' ? site.name : '';
+    const name = normalizeSiteNameForMatch(nameRaw);
+    if (name === '豆瓣首页' && apiLower.includes('douban')) return true;
+    if (name === '配置中心' && apiLower.includes('baseset')) return true;
+    return false;
   };
 
   const normalizeConfigCheckStatus = (v) => {
@@ -4007,21 +4035,6 @@ export function initDashboardPage(bootstrap = {}) {
     const errors = {};
     const disableSearchKeys = [];
 
-    const normalizeSiteNameForMatch = (name) => {
-      const raw = name != null ? String(name) : '';
-      if (!raw) return '';
-      // Remove emoji + variation selectors + zero-width.
-      let s = raw.replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\uFE0F/g, '');
-      try {
-        s = s.replace(/[\u{1F300}-\u{1FAFF}]/gu, '');
-      } catch (_e) {
-        // ignore
-      }
-      // Drop punctuation/symbols and whitespace.
-      s = s.replace(/[^\p{L}\p{N}\u4e00-\u9fff]+/gu, '');
-      return s.trim();
-    };
-
 	    const isMyPanSite = (site) => {
 	      const nameRaw = site && typeof site.name === 'string' ? site.name : '';
 	      const name = normalizeSiteNameForMatch(nameRaw);
@@ -4030,15 +4043,6 @@ export function initDashboardPage(bootstrap = {}) {
 	      const keys = ['夸克', '百度', '天逸', '115', '123', 'quark', 'baidu'];
 	      const lower = name.toLowerCase();
 	      return keys.some((k) => (/[a-z]/i.test(k) ? lower.includes(k) : name.includes(k)));
-	    };
-
-	    const isConfigCenterSite = (site) => {
-	      const nameRaw = site && typeof site.name === 'string' ? site.name : '';
-	      const name = normalizeSiteNameForMatch(nameRaw);
-	      if (!name || !name.includes('配置中心')) return false;
-	      const api = site && typeof site.api === 'string' ? site.api.trim() : '';
-	      if (!api) return false;
-	      return /\/spider\/baseset(?:\/|$)/.test(api);
 	    };
 
 	    for (let i = 0; i < uniq.length; i += 1) {
@@ -4053,23 +4057,10 @@ export function initDashboardPage(bootstrap = {}) {
 	        const apiRaw = String(site.api || '').trim();
 	        const spiderPath = apiRaw.replace(/\/+$/, '').replace(/^\//, '');
 
-	        if (isConfigCenterSite(site)) {
-	          // Config center sites are not content sources; only verify the route is reachable.
-	          let ok = false;
-	          let err = '';
-	          try {
-	            ok = await fetchCatPawOpenStatus({ apiBase: normalizedBase, path: spiderPath });
-	          } catch (e) {
-	            err = formatHttpError(e);
-	          }
-	          if (ok) {
-	            results[key] = 'valid';
-	          } else {
-	            results[key] = 'invalid';
-	            errors[key] = `配置中心:${err || '无法访问'}`;
-	          }
-	          continue;
-	        }
+          if (shouldSkipVideoSourceCheck(site)) {
+            results[key] = 'skipped';
+            continue;
+          }
 
 	        const spiderName = extractSpiderNameFromApi(site.api);
 	        if (spiderName === 'baseset') {
@@ -4207,7 +4198,8 @@ export function initDashboardPage(bootstrap = {}) {
 	        let playOkFromSearch = false;
 	        let playErr = '';
 
-	        const tryPlayFromCandidates = async (items) => {
+	        const tryPlayFromCandidates = async (items, meta) => {
+	          const state = meta && typeof meta === 'object' ? meta : null;
 	          const candidates = (Array.isArray(items) ? items : [])
 	            .filter((v) => v && typeof v === 'object')
 	            .slice(0, 3);
@@ -4230,7 +4222,11 @@ export function initDashboardPage(bootstrap = {}) {
 	                const first = Array.isArray(detailList) && detailList.length ? detailList[0] : null;
 	                playCandidate = extractPlayFromVod(first);
 	              }
-	              if (!playCandidate) continue;
+	              if (!playCandidate) {
+	                if (state) state.missingPlayMeta = true;
+	                if (!playErr) playErr = '缺少播放信息';
+	                continue;
+	              }
 	              const playResp = await requestCatPawOpenAdminJson({
 	                apiBase: normalizedBase,
 	                path: `play`,
@@ -4254,8 +4250,9 @@ export function initDashboardPage(bootstrap = {}) {
 	          return false;
 	        };
 
+          const categoryPlayMeta = { missingPlayMeta: false };
 	        if (categoryOk && !categoryEmpty) {
-	          playOkFromCategory = await tryPlayFromCandidates(vodCandidates);
+	          playOkFromCategory = await tryPlayFromCandidates(vodCandidates, categoryPlayMeta);
 	        }
 
 	        // 4) Search probe
@@ -4264,7 +4261,8 @@ export function initDashboardPage(bootstrap = {}) {
 	        let searchOk = false;
 	        let searchErr = '';
 	        let searchCandidates = [];
-	        const shouldUseSearchForPlay = !categoryOk || categoryEmpty;
+	        const shouldUseSearchForPlay =
+	          !categoryOk || categoryEmpty || (!playOkFromCategory && categoryPlayMeta.missingPlayMeta);
 	        const shouldProbeSearchFinally = playOkFromCategory;
 	        if (shouldUseSearchForPlay || shouldProbeSearchFinally) {
 	          try {
@@ -4407,6 +4405,7 @@ export function initDashboardPage(bootstrap = {}) {
       let invalidCount = 0;
       let categoryErrCount = 0;
       let searchErrCount = 0;
+      let skippedCount = 0;
       for (let i = 0; i < keys.length; i += 1) {
         setVideoSourceListStatus('', `检测中... ${i + 1}/${keys.length}`);
         // eslint-disable-next-line no-await-in-loop
@@ -4422,13 +4421,14 @@ export function initDashboardPage(bootstrap = {}) {
           else if (status === 'invalid') invalidCount += 1;
           else if (status === 'category_error') categoryErrCount += 1;
           else if (status === 'search_error') searchErrCount += 1;
+          else if (status === 'skipped') skippedCount += 1;
         } else {
           invalidCount += 1;
         }
       }
       setVideoSourceListStatus(
         invalidCount > 0 ? 'error' : 'success',
-        `检测完成：有效${validCount} 无效${invalidCount} 分类异常${categoryErrCount} 搜索异常${searchErrCount}`
+        `检测完成：有效${validCount} 无效${invalidCount} 跳过${skippedCount} 分类异常${categoryErrCount} 搜索异常${searchErrCount}`
       );
     } catch (_e) {
       setVideoSourceListStatus('error', '检测失败');
@@ -6005,16 +6005,33 @@ export function initDashboardPage(bootstrap = {}) {
 	        if (d2 && typeof d2.coverSite === 'string') {
 	          videoSourceCoverSite = String(d2.coverSite || '').trim();
 	        }
-	        // `baseset` is a settings site; mark as "valid" on import so the UI doesn't show "未检测".
+	        // Mark special "skipped check" sources and `baseset` settings sources on import
+          // so the UI doesn't keep showing "未检测".
 	        try {
-          const basesetKeys = (d2.sites || [])
-            .filter((s) => s && typeof s.key === 'string' && typeof s.api === 'string' && /^\/(?:[a-f0-9]{10}\/)?spider\/baseset(?:\/|$)/.test(s.api))
-            .map((s) => s.key)
-            .filter(Boolean);
-	          if (basesetKeys.length) {
+	          const sites = d2.sites || [];
+	          const skippedKeys = sites
+	            .filter((s) => s && typeof s.key === 'string' && shouldSkipVideoSourceCheck(s))
+	            .map((s) => s.key)
+	            .filter(Boolean);
+            const basesetKeys = sites
+              .filter(
+                (s) =>
+                  s &&
+                  typeof s.key === 'string' &&
+                  typeof s.api === 'string' &&
+                  !shouldSkipVideoSourceCheck(s) &&
+                  /^\/(?:[a-f0-9]{10}\/)?spider\/baseset(?:\/|$)/.test(s.api)
+              )
+              .map((s) => s.key)
+              .filter(Boolean);
+
+	          if (basesetKeys.length || skippedKeys.length) {
 	            const results = {};
 	            basesetKeys.forEach((k) => {
 	              results[k] = 'valid';
+	            });
+	            skippedKeys.forEach((k) => {
+	              results[k] = 'skipped';
 	            });
 	            const { resp: r3, data: d3 } = await postForm('/dashboard/video/source/sites/check', {
 	              results: JSON.stringify(results),

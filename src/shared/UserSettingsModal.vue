@@ -247,6 +247,8 @@
                               ? '无效'
                               : (s.availability || 'unchecked') === 'unknown'
                                 ? '未知'
+                                : (s.availability || 'unchecked') === 'skipped'
+                                  ? '跳过'
                                 : '未检测'
                         }}</span>
                       </span>
@@ -1003,10 +1005,35 @@ const extractSpiderNameFromApi = (api) => {
   return m && m[1] ? String(m[1]) : '';
 };
 
+const normalizeSiteNameForMatch = (name) => {
+  const raw = name != null ? String(name) : '';
+  if (!raw) return '';
+  let s = raw.replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\uFE0F/g, '');
+  try {
+    s = s.replace(/[\u{1F300}-\u{1FAFF}]/gu, '');
+  } catch (_e) {
+    // ignore
+  }
+  s = s.replace(/[^\p{L}\p{N}\u4e00-\u9fff]+/gu, '');
+  return s.trim();
+};
+
+const shouldSkipUserSiteCheck = (site) => {
+  const api = site && typeof site.api === 'string' ? site.api.trim() : '';
+  if (!api) return false;
+  const apiLower = api.toLowerCase();
+  const nameRaw = site && typeof site.name === 'string' ? site.name : '';
+  const name = normalizeSiteNameForMatch(nameRaw);
+  if (name === '豆瓣首页' && apiLower.includes('douban')) return true;
+  if (name === '配置中心' && apiLower.includes('baseset')) return true;
+  return false;
+};
+
 const checkOneUserSite = async (site) => {
   const normalized = normalizeCatPawOpenApiBase(catApiBase.value);
   if (!normalized) throw new Error('CatPawOpen 接口地址未设置');
   const api = site && typeof site.api === 'string' ? site.api : '';
+  if (shouldSkipUserSiteCheck(site)) return 'skipped';
   const spiderName = extractSpiderNameFromApi(api);
 	  if (spiderName === 'baseset') {
 	    const url = new URL('website', normalized);
