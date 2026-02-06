@@ -72,6 +72,12 @@ export function initDashboardPage(bootstrap = {}) {
   const magicAggregateRegexRuleList = document.getElementById('magicAggregateRegexRuleList');
   const magicAggregateRegexRuleStatus = document.getElementById('magicAggregateRegexRuleStatus');
 
+  const smartSourcePriorityTokensInput = document.getElementById('smartSourcePriorityTokensInput');
+  const smartPanMatchTokensInput = document.getElementById('smartPanMatchTokensInput');
+  const smartPanExtractModeSelect = document.getElementById('smartPanExtractModeSelect');
+  const smartPanSettingsSave = document.getElementById('smartPanSettingsSave');
+  const smartPanSettingsStatus = document.getElementById('smartPanSettingsStatus');
+
   const panelLoaded = {
     site: false,
     user: false,
@@ -6293,7 +6299,42 @@ export function initDashboardPage(bootstrap = {}) {
   let magicEpisodeRules = [];
   let magicEpisodeCleanRegexRules = [];
   let magicAggregateRegexRules = [];
+  let smartSourcePriorityTokens = [];
+  let smartPanMatchTokens = [];
+  let smartPanExtractMode = 'rule-first';
   let magicSaving = false;
+
+  const normalizeCommaTokenLine = (text) => {
+    const raw = typeof text === 'string' ? text : String(text || '');
+    if (!raw.trim()) return [];
+    const normalized = raw.replaceAll('，', ',');
+    const parts = normalized.split(',').map((x) => String(x || '').trim()).filter(Boolean);
+    const seen = new Set();
+    const out = [];
+    parts.forEach((p) => {
+      const key = p.toLowerCase();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push(p);
+    });
+    return out;
+  };
+
+  const renderSmartPanSettings = () => {
+    if (smartSourcePriorityTokensInput) {
+      smartSourcePriorityTokensInput.value = Array.isArray(smartSourcePriorityTokens) ? smartSourcePriorityTokens.join(',') : '';
+      smartSourcePriorityTokensInput.disabled = magicSaving;
+    }
+    if (smartPanMatchTokensInput) {
+      smartPanMatchTokensInput.value = Array.isArray(smartPanMatchTokens) ? smartPanMatchTokens.join(',') : '';
+      smartPanMatchTokensInput.disabled = magicSaving;
+    }
+    if (smartPanExtractModeSelect) {
+      smartPanExtractModeSelect.value = smartPanExtractMode === 'pan-first' ? 'pan-first' : 'rule-first';
+      smartPanExtractModeSelect.disabled = magicSaving;
+    }
+    if (smartPanSettingsSave) smartPanSettingsSave.disabled = magicSaving;
+  };
 
   // Normalize common escapes from pasted regex strings (e.g. `\\d` -> `\d`).
   const normalizeRegexText = (text) => {
@@ -6488,13 +6529,16 @@ export function initDashboardPage(bootstrap = {}) {
 
   const fetchMagicSettings = async () => getSuccessJson('/dashboard/magic/settings');
 
-	  const saveMagicSettings = async (episodeCleanRegexRules, episodeRules, aggregateRegexRules) => {
+	  const saveMagicSettings = async (episodeCleanRegexRules, episodeRules, aggregateRegexRules, smartSettings = {}) => {
 	    const cleanRules = Array.isArray(episodeCleanRegexRules) ? episodeCleanRegexRules : [];
 	    const { resp, data } = await postJsonSafe('/dashboard/magic/settings', {
 	      episodeCleanRegex: cleanRules[0] || '',
 	      episodeCleanRegexRules: cleanRules,
 	      episodeRules,
 	      aggregateRegexRules,
+        smartSourcePriorityTokens: Array.isArray(smartSettings.smartSourcePriorityTokens) ? smartSettings.smartSourcePriorityTokens : [],
+        smartPanMatchTokens: Array.isArray(smartSettings.smartPanMatchTokens) ? smartSettings.smartPanMatchTokens : [],
+        smartPanExtractMode: typeof smartSettings.smartPanExtractMode === 'string' ? smartSettings.smartPanExtractMode : 'rule-first',
 	    });
 	    if (!resp.ok || !data || data.success !== true) {
 	      throw new Error((data && data.message) || `HTTP ${resp.status}`);
@@ -6580,6 +6624,7 @@ export function initDashboardPage(bootstrap = {}) {
 	    renderMagicRuleList(magicEpisodeCleanRegexRuleList, magicEpisodeCleanRegexRules, 'episodeCleanRegex');
 	    renderMagicRuleList(magicEpisodeRuleList, magicEpisodeRules, 'episode');
 	    renderMagicRuleList(magicAggregateRegexRuleList, magicAggregateRegexRules, 'aggregateRegex');
+      renderSmartPanSettings();
 	    setMagicTestOutput('', '');
 	    setMagicAggregateTestOutput('', '');
 	  };
@@ -6590,14 +6635,20 @@ export function initDashboardPage(bootstrap = {}) {
 	    setMagicStatus(magicEpisodeCleanRegexRuleStatus, '', '保存中...');
 	    setMagicStatus(magicEpisodeRuleStatus, '', '保存中...');
 	    setMagicStatus(magicAggregateRegexRuleStatus, '', '保存中...');
+      setMagicStatus(smartPanSettingsStatus, '', '保存中...');
 	    try {
+        smartSourcePriorityTokens = normalizeCommaTokenLine(smartSourcePriorityTokensInput ? smartSourcePriorityTokensInput.value : '');
+        smartPanMatchTokens = normalizeCommaTokenLine(smartPanMatchTokensInput ? smartPanMatchTokensInput.value : '');
+        smartPanExtractMode = smartPanExtractModeSelect && smartPanExtractModeSelect.value === 'pan-first' ? 'pan-first' : 'rule-first';
+
 	      const episodeRulesForSave = (Array.isArray(magicEpisodeRules) ? magicEpisodeRules : [])
 	        .map(encodeEpisodeRule)
 	        .filter(Boolean);
 	      const data = await saveMagicSettings(
 	        magicEpisodeCleanRegexRules,
 	        episodeRulesForSave,
-	        Array.isArray(magicAggregateRegexRules) ? magicAggregateRegexRules : []
+	        Array.isArray(magicAggregateRegexRules) ? magicAggregateRegexRules : [],
+          { smartSourcePriorityTokens, smartPanMatchTokens, smartPanExtractMode }
 	      );
 	      magicEpisodeCleanRegexRules = Array.isArray(data.episodeCleanRegexRules)
 	        ? data.episodeCleanRegexRules
@@ -6610,15 +6661,20 @@ export function initDashboardPage(bootstrap = {}) {
       magicAggregateRegexRules = Array.isArray(data.aggregateRegexRules)
         ? data.aggregateRegexRules
         : magicAggregateRegexRules;
+      smartSourcePriorityTokens = Array.isArray(data.smartSourcePriorityTokens) ? data.smartSourcePriorityTokens : smartSourcePriorityTokens;
+      smartPanMatchTokens = Array.isArray(data.smartPanMatchTokens) ? data.smartPanMatchTokens : smartPanMatchTokens;
+      smartPanExtractMode = typeof data.smartPanExtractMode === 'string' && data.smartPanExtractMode === 'pan-first' ? 'pan-first' : 'rule-first';
 	      renderMagicPanels();
 	      setMagicStatus(magicEpisodeCleanRegexRuleStatus, 'success', '已保存');
 	      setMagicStatus(magicEpisodeRuleStatus, 'success', '已保存');
 	      setMagicStatus(magicAggregateRegexRuleStatus, 'success', '已保存');
+        setMagicStatus(smartPanSettingsStatus, 'success', '已保存');
 	    } catch (err) {
 	      const msg = (err && err.message) || '保存失败';
 	      setMagicStatus(magicEpisodeCleanRegexRuleStatus, 'error', msg);
 	      setMagicStatus(magicEpisodeRuleStatus, 'error', msg);
 	      setMagicStatus(magicAggregateRegexRuleStatus, 'error', msg);
+        setMagicStatus(smartPanSettingsStatus, 'error', msg);
 	    } finally {
 	      magicSaving = false;
       renderMagicPanels();
@@ -6632,12 +6688,14 @@ export function initDashboardPage(bootstrap = {}) {
 	    setMagicStatus(magicEpisodeCleanRegexRuleStatus, '', '加载中...');
 	    setMagicStatus(magicEpisodeRuleStatus, '', '加载中...');
 	    setMagicStatus(magicAggregateRegexRuleStatus, '', '加载中...');
+      setMagicStatus(smartPanSettingsStatus, '', '加载中...');
 	    try {
 	      const data = await fetchMagicSettings();
 	      if (!data) {
 	        setMagicStatus(magicEpisodeCleanRegexRuleStatus, 'error', '加载失败');
 	        setMagicStatus(magicEpisodeRuleStatus, 'error', '加载失败');
 	        setMagicStatus(magicAggregateRegexRuleStatus, 'error', '加载失败');
+          setMagicStatus(smartPanSettingsStatus, 'error', '加载失败');
 	        return;
       }
 	      magicEpisodeRules = Array.isArray(data.episodeRules)
@@ -6649,10 +6707,14 @@ export function initDashboardPage(bootstrap = {}) {
 	          ? [data.episodeCleanRegex.trim()]
 	          : [];
 	      magicAggregateRegexRules = Array.isArray(data.aggregateRegexRules) ? data.aggregateRegexRules : [];
+        smartSourcePriorityTokens = Array.isArray(data.smartSourcePriorityTokens) ? data.smartSourcePriorityTokens : [];
+        smartPanMatchTokens = Array.isArray(data.smartPanMatchTokens) ? data.smartPanMatchTokens : [];
+        smartPanExtractMode = typeof data.smartPanExtractMode === 'string' && data.smartPanExtractMode === 'pan-first' ? 'pan-first' : 'rule-first';
 	      renderMagicPanels();
 	      setMagicStatus(magicEpisodeCleanRegexRuleStatus, '', '');
 	      setMagicStatus(magicEpisodeRuleStatus, '', '');
 	      setMagicStatus(magicAggregateRegexRuleStatus, '', '');
+        setMagicStatus(smartPanSettingsStatus, '', '');
 	      panelLoaded.magic = true;
 	    } finally {
       panelLoading.magic = false;
@@ -6723,6 +6785,28 @@ export function initDashboardPage(bootstrap = {}) {
       }
     });
   }
+
+  if (smartPanSettingsSave) {
+    smartPanSettingsSave.addEventListener('click', async () => {
+      if (magicSaving) return;
+      renderMagicPanels();
+      await persistMagic();
+    });
+  }
+  const smartSettingsEnterToSave = (el) => {
+    if (!el) return;
+    el.addEventListener('keydown', (e) => {
+      if (!e) return;
+      const key = e.key || '';
+      if (key === 'Enter') {
+        e.preventDefault();
+        if (!magicSaving) void persistMagic();
+      }
+    });
+  };
+  smartSettingsEnterToSave(smartSourcePriorityTokensInput);
+  smartSettingsEnterToSave(smartPanMatchTokensInput);
+  if (smartPanExtractModeSelect) smartPanExtractModeSelect.addEventListener('change', () => void persistMagic());
 
 	  const onMagicListClick = async (e) => {
 	    const target = e && e.target ? e.target : null;

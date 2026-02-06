@@ -798,6 +798,53 @@
               </div>
             </div>
           </div>
+
+          <div class="admin-card space-y-3">
+            <div class="flex items-center gap-3">
+              <div class="text-sm font-semibold text-gray-700 dark:text-gray-200">智能播放源设置</div>
+            </div>
+
+            <div class="text-sm font-medium text-gray-700 dark:text-gray-200">优先匹配片源规则</div>
+            <div class="flex items-center gap-2">
+              <div class="min-w-0" style="flex: 0 0 50%; max-width: 50%;">
+                <input
+                  id="smartSourcePriorityTokensInput"
+                  class="tv-field min-w-0"
+                  placeholder="60fps,4K"
+                />
+              </div>
+            </div>
+
+            <div class="pt-2 border-t border-gray-200 dark:border-white/10">
+              <div class="text-sm font-medium text-gray-700 dark:text-gray-200">网盘匹配规则</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="min-w-0" style="flex: 0 0 50%; max-width: 50%;">
+                <input
+                  id="smartPanMatchTokensInput"
+                  class="tv-field min-w-0"
+                  placeholder="百度,夸克,天翼,UC,115"
+                />
+              </div>
+            </div>
+
+            <div class="pt-2 border-t border-gray-200 dark:border-white/10">
+              <div class="text-sm font-medium text-gray-700 dark:text-gray-200">提取优先级</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="min-w-0" style="flex: 0 0 50%; max-width: 50%;">
+                <select id="smartPanExtractModeSelect" class="tv-field min-w-0">
+                  <option value="rule-first">规则优先</option>
+                  <option value="pan-first">网盘优先</option>
+                </select>
+              </div>
+              <button id="smartPanSettingsSave" type="button" class="btn-green">保存</button>
+            </div>
+            <div id="smartPanSettingsStatus" class="text-xs hidden"></div>
+            <div class="text-xs text-gray-500 dark:text-gray-400">
+              说明：用逗号分隔（支持中文逗号，会自动转换）。匹配大小写不敏感。
+            </div>
+          </div>
         </section>
       </div>
     </div>

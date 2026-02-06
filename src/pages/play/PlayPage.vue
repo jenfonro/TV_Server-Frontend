@@ -247,12 +247,21 @@
                             <button
                               type="button"
                               class="custom-dropdown-btn play-pan-btn"
-                              :disabled="panOptions.length === 0"
+                              :disabled="panOptions.length === 0 && !smartPanAvailable"
                               @click="panDropdownOpen = !panDropdownOpen"
                             >
                               {{ selectedPanLabel }}
                             </button>
                             <div class="custom-dropdown-list" :class="{ hidden: !panDropdownOpen }">
+                              <div
+                                v-if="smartPanAvailable"
+                                class="custom-dropdown-item"
+                                :class="{ active: SMART_PAN_KEY === selectedPanKey }"
+                                role="option"
+                                @click="selectPan(SMART_PAN_KEY)"
+                              >
+                                {{ SMART_PAN_LABEL }}
+                              </div>
                               <div
                                 v-for="o in panOptions"
                                 :key="o.key"
@@ -263,7 +272,7 @@
                               >
                                 {{ o.label }}
                               </div>
-                              <div v-if="panOptions.length === 0" class="custom-dropdown-item">
+                              <div v-if="panOptions.length === 0 && !smartPanAvailable" class="custom-dropdown-item">
                                 {{ introLoading ? '加载中...' : '暂无数据' }}
                               </div>
                             </div>
@@ -1126,6 +1135,7 @@ const panDropdownEl = ref(null);
 const resumeHistory = ref(null);
 const resumeHistoryLoaded = ref(false);
 const resumeHistoryApplied = ref(false);
+const panPrefApplied = ref(false);
 const resumeHistoryState = { seq: 0, key: '', inFlight: null };
 const detail = ref({
   title: '',
@@ -1545,6 +1555,9 @@ const parsePlaySources = (fromRaw, urlRaw) => {
   return out;
 };
 
+const SMART_PAN_KEY = 'smart';
+const SMART_PAN_LABEL = '智能列表';
+
 const panOptions = computed(() => parsePlaySources(detail.value.playFrom, detail.value.playUrl));
 const selectedPanKey = computed(() => {
   return selectedPan.value || panOptions.value[0]?.key || '';
@@ -1553,6 +1566,17 @@ const selectedPanKey = computed(() => {
 const pickEpisodeByUrlAcrossPans = (targetId) => {
   const wanted = String(targetId || '').trim();
   if (!wanted) return null;
+  if (smartPanAvailable.value) {
+    const episodes = Array.isArray(smartPanEpisodes.value) ? smartPanEpisodes.value : [];
+    for (let i = 0; i < episodes.length; i += 1) {
+      const ep = episodes[i];
+      const url = ep && ep.url != null ? String(ep.url) : '';
+      if (!url) continue;
+      if (url === wanted || url.includes(wanted) || wanted.includes(url)) {
+        return { panKey: SMART_PAN_KEY, index: i };
+      }
+    }
+  }
   const list = panOptions.value;
   for (const pan of list) {
     const episodes = pan && Array.isArray(pan.episodes) ? pan.episodes : [];
@@ -1570,8 +1594,9 @@ const pickEpisodeByUrlAcrossPans = (targetId) => {
 
 const selectedPanLabel = computed(() => {
   if (introLoading.value) return '加载中...';
+  if (selectedPanKey.value === SMART_PAN_KEY && smartPanAvailable.value) return SMART_PAN_LABEL;
   const list = panOptions.value;
-  if (!list.length) return '暂无数据';
+  if (!list.length) return smartPanAvailable.value ? SMART_PAN_LABEL : '暂无数据';
   const found = list.find((o) => o && o.key === selectedPanKey.value);
   return (found && found.label ? String(found.label) : list[0].label) || '暂无数据';
 });
@@ -1582,6 +1607,50 @@ const preferBaiduPanKey = computed(() => {
   const idx = list.findIndex((o) => o && typeof o.label === 'string' && o.label.includes('百度'));
   return idx >= 0 ? list[idx].key : '';
 });
+
+const PAN_PREF_STORAGE_PREFIX = 'meowfilm_pan_pref::';
+const normalizeContentKeyForPanPref = (s) => {
+  const raw = typeof s === 'string' ? s : String(s || '');
+  return raw.trim().toLowerCase().replace(/\s+/g, '');
+};
+const normalizePanLabelForPanPref = (label) => {
+  return String(label || '').trim().replace(/#\d{1,3}\s*$/i, '').trim().toLowerCase();
+};
+const panPrefStorageKey = computed(() => {
+  const k = normalizeContentKeyForPanPref(displayTitle.value);
+  return k ? `${PAN_PREF_STORAGE_PREFIX}${k}` : '';
+});
+const readPanPref = () => {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return '';
+    const key = panPrefStorageKey.value;
+    if (!key) return '';
+    return String(window.localStorage.getItem(key) || '').trim().toLowerCase();
+  } catch (_e) {
+    return '';
+  }
+};
+const writePanPref = (value) => {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    const key = panPrefStorageKey.value;
+    if (!key) return;
+    const v = String(value || '').trim().toLowerCase();
+    if (!v) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, v);
+  } catch (_e) {}
+};
+const findPanKeyByPrefLabel = (prefLabel) => {
+  const wanted = String(prefLabel || '').trim().toLowerCase();
+  if (!wanted) return '';
+  const list = panOptions.value;
+  for (let i = 0; i < list.length; i += 1) {
+    const it = list[i];
+    const label = it && it.label ? normalizePanLabelForPanPref(it.label) : '';
+    if (label && label === wanted) return it.key || '';
+  }
+  return '';
+};
 
 watch(
   () => `${isIos.value ? '1' : '0'}|${panOptions.value.length}|${selectedPan.value}`,
@@ -1605,6 +1674,7 @@ const toggleRawList = (e) => {
 const selectPan = (key) => {
   const k = typeof key === 'string' ? key : '';
   if (!k) return;
+  if (k === SMART_PAN_KEY && !smartPanAvailable.value) return;
   // Keep the current episode list view mode when switching pan source.
   // If the user is currently in raw list mode, treat the switch as an explicit choice and stop auto-toggling.
   if (rawListMode.value) autoRawListMode.value = false;
@@ -1612,8 +1682,19 @@ const selectPan = (key) => {
   panDropdownOpen.value = false;
   selectedEpisodeGroup.value = '';
 
-  if (playingPanKey.value && playingPanKey.value === k && playingEpisodeIndex.value >= 0) {
+  if (k === SMART_PAN_KEY) {
+    writePanPref(SMART_PAN_KEY);
+  } else {
     const src = panOptions.value.find((o) => o && o.key === k) || null;
+    const labelNorm = src && src.label ? normalizePanLabelForPanPref(String(src.label)) : '';
+    if (labelNorm) writePanPref(labelNorm);
+  }
+
+  if (playingPanKey.value && playingPanKey.value === k && playingEpisodeIndex.value >= 0) {
+    const src =
+      k === SMART_PAN_KEY
+        ? { label: SMART_PAN_LABEL, episodes: Array.isArray(smartPanEpisodes.value) ? smartPanEpisodes.value : [] }
+        : (panOptions.value.find((o) => o && o.key === k) || null);
     const total = src && Array.isArray(src.episodes) ? src.episodes.length : 0;
     if (total && playingEpisodeIndex.value < total) {
       selectedEpisodeIndex.value = playingEpisodeIndex.value;
@@ -1624,6 +1705,9 @@ const selectPan = (key) => {
 };
 
 const selectedPanSource = computed(() => {
+  if (selectedPanKey.value === SMART_PAN_KEY && smartPanAvailable.value) {
+    return { key: SMART_PAN_KEY, label: SMART_PAN_LABEL, episodes: smartPanEpisodes.value || [], smart: true };
+  }
   const list = panOptions.value;
   if (!list.length) return null;
   const k = selectedPanKey.value;
@@ -1755,6 +1839,53 @@ const compiledMagicEpisodeRules = computed(() => {
 
 const hasMagicEpisodeRules = computed(() => compiledMagicEpisodeRules.value.length > 0);
 
+const smartSourcePriorityTokensSetting = computed(() => {
+  const list = props.bootstrap?.settings?.smartSourcePriorityTokens;
+  if (!Array.isArray(list)) return [];
+  return list.map((x) => (typeof x === 'string' ? x.trim() : '')).filter(Boolean);
+});
+
+const smartPanMatchTokensSetting = computed(() => {
+  const list = props.bootstrap?.settings?.smartPanMatchTokens;
+  if (!Array.isArray(list)) return [];
+  return list.map((x) => (typeof x === 'string' ? x.trim() : '')).filter(Boolean);
+});
+
+const smartPanExtractModeSetting = computed(() => {
+  const raw = props.bootstrap?.settings?.smartPanExtractMode;
+  return raw === 'pan-first' ? 'pan-first' : 'rule-first';
+});
+
+const compiledSmartSourcePriorityTokens = computed(() => {
+  const list = Array.isArray(smartSourcePriorityTokensSetting.value) ? smartSourcePriorityTokensSetting.value : [];
+  const out = [];
+  const seen = new Set();
+  list.forEach((t) => {
+    const s = typeof t === 'string' ? t.trim() : '';
+    if (!s) return;
+    const key = s.toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(key);
+  });
+  return out;
+});
+
+const compiledSmartPanMatchTokens = computed(() => {
+  const list = Array.isArray(smartPanMatchTokensSetting.value) ? smartPanMatchTokensSetting.value : [];
+  const out = [];
+  const seen = new Set();
+  list.forEach((t) => {
+    const s = typeof t === 'string' ? t.trim() : '';
+    if (!s) return;
+    const key = s.toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(key);
+  });
+  return out;
+});
+
 const cleanMagicEpisodeText = (text, cleanRules) => {
   const s = typeof text === 'string' ? text.trim() : '';
   if (!s || !Array.isArray(cleanRules) || !cleanRules.length) return s;
@@ -1825,6 +1956,202 @@ const extractSeasonEpisodeFromCandidates = (candidates, rules, cleanRules) => {
   }
   return { season: 0, episode: 0 };
 };
+
+const smartPanEpisodes = computed(() => {
+  if (!hasMagicEpisodeRules.value) return [];
+
+  const panTokenOrder = compiledSmartPanMatchTokens.value;
+  if (!Array.isArray(panTokenOrder) || panTokenOrder.length < 2) return [];
+
+  const rawPans = panOptions.value;
+  if (!Array.isArray(rawPans) || rawPans.length < 2) return [];
+
+  const qualityOrder = compiledSmartSourcePriorityTokens.value;
+  const mode = smartPanExtractModeSetting.value;
+
+  const labelTokenIdxOf = (label) => {
+    const s = typeof label === 'string' ? label.trim().toLowerCase() : '';
+    if (!s) return -1;
+    for (let i = 0; i < panTokenOrder.length; i += 1) {
+      const t = panTokenOrder[i];
+      if (t && s.includes(t)) return i;
+    }
+    return -1;
+  };
+
+  const candidatePans = [];
+  const tokenSet = new Set();
+  rawPans.forEach((pan) => {
+    if (!pan || !pan.label || !Array.isArray(pan.episodes) || !pan.episodes.length) return;
+    const idx = labelTokenIdxOf(pan.label);
+    if (idx < 0) return;
+    tokenSet.add(idx);
+    candidatePans.push({ pan, tokenIdx: idx });
+  });
+  if (tokenSet.size < 2) return [];
+
+  const parseExplicitSeason = (text) => {
+    const s = typeof text === 'string' ? text.trim() : '';
+    if (!s) return { has: false, season: 0, special: false, s1: false, s2p: false };
+    const m = s.match(/S(\d{1,2})\s*E(\d{1,5})/i);
+    if (!m || !m[1]) return { has: false, season: 0, special: false, s1: false, s2p: false };
+    const n = Number.parseInt(String(m[1]), 10);
+    const season = Number.isFinite(n) && n >= 0 && n <= 99 ? n : 0;
+    return {
+      has: true,
+      season,
+      special: season === 0,
+      s1: season === 1,
+      s2p: season >= 2,
+    };
+  };
+
+  const qualityRankOf = (text) => {
+    const s = typeof text === 'string' ? text.trim().toLowerCase() : '';
+    if (!s || !Array.isArray(qualityOrder) || !qualityOrder.length) return Number.POSITIVE_INFINITY;
+    for (let i = 0; i < qualityOrder.length; i += 1) {
+      const t = qualityOrder[i];
+      if (t && s.includes(t)) return i;
+    }
+    return Number.POSITIVE_INFINITY;
+  };
+
+  const rules = compiledMagicEpisodeRules.value;
+  const cleanRules = compiledMagicEpisodeCleanRegexRules.value;
+  if (!Array.isArray(rules) || !rules.length) return [];
+
+  const candidates = [];
+  const matchSeasonSet = new Set();
+  let hasExplicitSeason1 = false;
+  let hasExplicitSeason2Plus = false;
+  let hasExplicitSpecialSeason0 = false;
+
+  candidatePans.forEach(({ pan, tokenIdx }) => {
+    const eps = Array.isArray(pan.episodes) ? pan.episodes : [];
+    eps.forEach((ep, index) => {
+      if (!ep || !ep.url) return;
+      const url = String(ep.url || '').trim();
+      if (!url) return;
+      const name = ep && ep.name != null ? String(ep.name) : '';
+      const rawNames = extractRawNamesFromEpisodeUrl(url);
+      const rawText = (rawNames[0] || name || '').trim();
+      const rawTextLower = rawText.toLowerCase();
+
+      const match = extractSeasonEpisodeFromCandidates([name, rawText].filter(Boolean), rules, cleanRules);
+      const episodeNo = match && Number.isFinite(Number(match.episode)) ? Math.floor(Number(match.episode)) : 0;
+      if (episodeNo <= 0) return;
+      const seasonNo = match && Number.isFinite(Number(match.season)) ? Math.floor(Number(match.season)) : 0;
+      if (seasonNo > 0) matchSeasonSet.add(seasonNo);
+
+      const explicit = parseExplicitSeason(rawText);
+      if (explicit.s1) hasExplicitSeason1 = true;
+      if (explicit.s2p) hasExplicitSeason2Plus = true;
+      if (explicit.special) hasExplicitSpecialSeason0 = true;
+
+      candidates.push({
+        tokenIdx,
+        panLabel: String(pan.label || '').trim(),
+        index,
+        ep,
+        matchSeason: seasonNo,
+        explicitSeason: explicit.has ? explicit.season : null,
+        explicitSeasonHas: explicit.has,
+        episodeNo,
+        qualityRank: qualityRankOf(rawTextLower),
+        rawTextLower,
+      });
+    });
+  });
+  if (!candidates.length) return [];
+
+  const multiSeason = matchSeasonSet.size >= 2 || hasExplicitSeason2Plus || (hasExplicitSpecialSeason0 && hasExplicitSeason1);
+
+  const byKey = new Map();
+  candidates.forEach((c) => {
+    const episodeNo = c.episodeNo;
+    if (!episodeNo) return;
+
+    if (!multiSeason) {
+      const key = `E${episodeNo}`;
+      const list = byKey.get(key) || [];
+      list.push({ ...c, key, seasonForKey: 0, episodeForKey: episodeNo });
+      byKey.set(key, list);
+      return;
+    }
+
+    // Multi-season: require an explicit season marker or a non-zero extracted season.
+    const seasonPicked =
+      c.matchSeason > 0
+        ? c.matchSeason
+        : c.explicitSeasonHas
+          ? Number(c.explicitSeason) || 0
+          : 0;
+    if (!seasonPicked && !c.explicitSeasonHas) return;
+    const key = `S${seasonPicked}E${episodeNo}`;
+    const list = byKey.get(key) || [];
+    list.push({ ...c, key, seasonForKey: seasonPicked, episodeForKey: episodeNo });
+    byKey.set(key, list);
+  });
+
+  const pickBest = (list) => {
+    if (!Array.isArray(list) || !list.length) return null;
+    if (mode === 'pan-first') {
+      for (let tIdx = 0; tIdx < panTokenOrder.length; tIdx += 1) {
+        const group = list.filter((it) => it && it.tokenIdx === tIdx);
+        if (!group.length) continue;
+        group.sort((a, b) => {
+          const qa = Number.isFinite(Number(a.qualityRank)) ? Number(a.qualityRank) : Number.POSITIVE_INFINITY;
+          const qb = Number.isFinite(Number(b.qualityRank)) ? Number(b.qualityRank) : Number.POSITIVE_INFINITY;
+          if (qa !== qb) return qa - qb;
+          return a.index - b.index;
+        });
+        return group[0] || null;
+      }
+      return null;
+    }
+
+    // rule-first
+    const sorted = list.slice().sort((a, b) => {
+      const qa = Number.isFinite(Number(a.qualityRank)) ? Number(a.qualityRank) : Number.POSITIVE_INFINITY;
+      const qb = Number.isFinite(Number(b.qualityRank)) ? Number(b.qualityRank) : Number.POSITIVE_INFINITY;
+      if (qa !== qb) return qa - qb;
+      if (a.tokenIdx !== b.tokenIdx) return a.tokenIdx - b.tokenIdx;
+      return a.index - b.index;
+    });
+    return sorted[0] || null;
+  };
+
+  const pad2 = (n) => String(Math.max(0, Math.min(99, Number(n) || 0))).padStart(2, '0');
+  const padEp = (n) => {
+    const x = Number.isFinite(Number(n)) ? Math.max(0, Math.floor(Number(n))) : 0;
+    if (x <= 99) return String(x).padStart(2, '0');
+    if (x <= 999) return String(x).padStart(3, '0');
+    return String(x);
+  };
+
+  const chosen = [];
+  byKey.forEach((list) => {
+    const picked = pickBest(list);
+    if (!picked || !picked.ep || !picked.ep.url) return;
+    chosen.push(picked);
+  });
+  if (!chosen.length) return [];
+
+  chosen.sort((a, b) => {
+    if (!multiSeason) return a.episodeForKey - b.episodeForKey;
+    if (a.seasonForKey !== b.seasonForKey) return a.seasonForKey - b.seasonForKey;
+    return a.episodeForKey - b.episodeForKey;
+  });
+
+  return chosen.map((c) => {
+    const season = multiSeason ? Number(c.seasonForKey) || 0 : 0;
+    const episode = Number(c.episodeForKey) || 0;
+    const name = multiSeason ? `S${pad2(season)}E${padEp(episode)}` : `第${episode}集`;
+    return { ...c.ep, name };
+  });
+});
+
+const smartPanAvailable = computed(() => Array.isArray(smartPanEpisodes.value) && smartPanEpisodes.value.length > 0);
 
 const parseLooseSeasonEpisodeFromText = (text) => {
   const s = typeof text === 'string' ? text.trim() : '';
@@ -2048,13 +2375,28 @@ const seasonTabs = computed(() => {
   if (!list.length) return [];
   const set = new Set();
   let hasZeroSeason = false;
+  let hasSpecialSeason0 = false;
+  const specialRe = /S0{1,2}\s*E\d{1,5}/i;
   list.forEach((it) => {
     const s = it && Number.isFinite(Number(it.season)) ? Number(it.season) : 0;
     if (s > 0) set.add(s);
-    else hasZeroSeason = true;
+    else {
+      hasZeroSeason = true;
+      if (!hasSpecialSeason0) {
+        const candidates = [];
+        if (it && it.name != null) candidates.push(String(it.name));
+        if (it && it.url != null) {
+          const rawNames = extractRawNamesFromEpisodeUrl(String(it.url));
+          rawNames.forEach((n) => {
+            if (n) candidates.push(String(n));
+          });
+        }
+        if (candidates.some((t) => specialRe.test(String(t || '')))) hasSpecialSeason0 = true;
+      }
+    }
   });
   const seasons = Array.from(set).sort((a, b) => a - b);
-  if (seasons.length < 2) return [];
+  if (seasons.length < 2 && !(seasons.length >= 1 && hasSpecialSeason0)) return [];
 
   const cn = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
   const labelOf = (s) => {
@@ -2065,7 +2407,7 @@ const seasonTabs = computed(() => {
   };
 
   const tabs = seasons.map((s) => ({ key: `S${s}`, season: s, label: labelOf(s) }));
-  if (hasZeroSeason) tabs.push({ key: 'S0', season: 0, label: '未分季' });
+  if (hasZeroSeason) tabs.push({ key: 'S0', season: 0, label: hasSpecialSeason0 ? '特别篇' : '未分季' });
   return tabs;
 });
 
@@ -3196,6 +3538,7 @@ const playerStageProgress = computed(() => {
 const loadResumeFromHistory = async () => {
   resumeHistoryLoaded.value = false;
   resumeHistoryApplied.value = false;
+  panPrefApplied.value = false;
   resumeHistory.value = null;
   const siteKey = (props.siteKey || '').trim();
   const videoId = (props.videoId || '').trim();
@@ -3276,6 +3619,7 @@ watch(
     [
       introLoading.value,
       resumeHistoryLoaded.value ? '1' : '0',
+      panPrefStorageKey.value,
       selectedPanKey.value,
       selectedEpisodes.value.length,
       selectedEpisodeIndex.value,
@@ -3298,6 +3642,41 @@ watch(
       }
     }
 
+    // Apply remembered pan preference (same video dimension) when there's no play history for this site/videoId.
+    if (!panPrefApplied.value && !resumeHistory.value) {
+      const prevPan = selectedPan.value;
+      const canReadPref = !!panPrefStorageKey.value;
+      const pref = canReadPref ? readPanPref() : '';
+      if (pref === SMART_PAN_KEY && smartPanAvailable.value) {
+        selectedPan.value = SMART_PAN_KEY;
+        panDropdownOpen.value = false;
+        selectedEpisodeGroup.value = '';
+        selectedEpisodeIndex.value = -1;
+        panPrefApplied.value = true;
+        if (prevPan !== selectedPan.value) return;
+      } else if (pref) {
+        const foundKey = findPanKeyByPrefLabel(pref);
+        if (foundKey) {
+          selectedPan.value = foundKey;
+          panDropdownOpen.value = false;
+          selectedEpisodeGroup.value = '';
+          selectedEpisodeIndex.value = -1;
+          panPrefApplied.value = true;
+          if (prevPan !== selectedPan.value) return;
+        }
+      } else if (smartPanAvailable.value) {
+        selectedPan.value = SMART_PAN_KEY;
+        panDropdownOpen.value = false;
+        selectedEpisodeGroup.value = '';
+        selectedEpisodeIndex.value = -1;
+        panPrefApplied.value = true;
+        if (prevPan !== selectedPan.value) return;
+      } else if (canReadPref) {
+        // No preference, no smart pan: mark applied once we have a stable content key.
+        panPrefApplied.value = true;
+      }
+    }
+
 	    // Restore from history once (pan + episode), if available and already loaded.
 	    if (!resumeHistoryApplied.value && resumeHistoryLoaded.value && resumeHistory.value) {
 	      const prevPan = selectedPan.value;
@@ -3311,8 +3690,12 @@ watch(
 	      let target = null;
 	      if (wantedPanLabel) {
 	        const want = normalize(wantedPanLabel);
-	        target = panOptions.value.find((o) => o && normalize(o.label) === want) || null;
-	        if (target && target.key) selectedPan.value = target.key;
+          if (want === normalize(SMART_PAN_LABEL) && smartPanAvailable.value) {
+            selectedPan.value = SMART_PAN_KEY;
+          } else {
+            target = panOptions.value.find((o) => o && normalize(o.label) === want) || null;
+            if (target && target.key) selectedPan.value = target.key;
+          }
 	      }
 
 	      const rules = compiledMagicEpisodeRules.value;
@@ -3960,19 +4343,21 @@ onBeforeUnmount(() => {
 });
 
 watch(
-  () => panOptions.value.map((o) => o.key).join(','),
+  () => `${panOptions.value.map((o) => o.key).join(',')}|${smartPanAvailable.value ? '1' : '0'}`,
   () => {
-    const first = panOptions.value[0]?.key || '';
-    if (!first) {
+    if (selectedPan.value === SMART_PAN_KEY) {
+      if (smartPanAvailable.value) return;
       selectedPan.value = '';
       return;
     }
-    if (!selectedPan.value) {
-      selectedPan.value = first;
+    const list = panOptions.value;
+    if (!list.length) {
+      selectedPan.value = '';
       return;
     }
-    const exists = panOptions.value.some((o) => o && o.key === selectedPan.value);
-    if (!exists) selectedPan.value = first;
+    if (!selectedPan.value) return;
+    const exists = list.some((o) => o && o.key === selectedPan.value);
+    if (!exists) selectedPan.value = '';
   }
 );
 </script>
