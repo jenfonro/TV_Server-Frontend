@@ -400,7 +400,7 @@
 	                              :title="ep.name"
 	                              @click="selectEpisode(ep.index)"
 	                            >
-	                              {{ ep.no }}
+	                              {{ ep.displayNo != null ? ep.displayNo : ep.no }}
 	                            </button>
 	                          </template>
 	                          <div v-else class="tv-episode-overlay">
@@ -1605,11 +1605,12 @@ const toggleRawList = (e) => {
 const selectPan = (key) => {
   const k = typeof key === 'string' ? key : '';
   if (!k) return;
+  // Keep the current episode list view mode when switching pan source.
+  // If the user is currently in raw list mode, treat the switch as an explicit choice and stop auto-toggling.
+  if (rawListMode.value) autoRawListMode.value = false;
   selectedPan.value = k;
   panDropdownOpen.value = false;
   selectedEpisodeGroup.value = '';
-  rawListMode.value = false;
-  autoRawListMode.value = false;
 
   if (playingPanKey.value && playingPanKey.value === k && playingEpisodeIndex.value >= 0) {
     const src = panOptions.value.find((o) => o && o.key === k) || null;
@@ -1983,6 +1984,7 @@ const allDisplayedEpisodes = computed(() => {
   const hasMagic = hasMagicEpisodeRules.value;
 
   const items = [];
+  let unmatchedCount = 0;
   for (let idx = 0; idx < eps.length; idx += 1) {
     const ep = eps[idx];
     const url = (ep && ep.url ? String(ep.url) : '').trim();
@@ -1992,24 +1994,49 @@ const allDisplayedEpisodes = computed(() => {
     const no = Number.isFinite(Number(m.episode)) ? Number(m.episode) : 0;
 
     if (hasMagic) {
-      if (!Number.isFinite(no) || no <= 0) continue;
-      items.push({ key: `${idx}-${url}`, index: idx, no, season, name, url });
+      if (!Number.isFinite(no) || no <= 0) {
+        unmatchedCount += 1;
+        items.push({
+          key: `${idx}-${url}`,
+          index: idx,
+          no: 0,
+          season,
+          name,
+          url,
+          unmatched: true,
+          displayNo: unmatchedCount,
+        });
+        continue;
+      }
+      items.push({ key: `${idx}-${url}`, index: idx, no, season, name, url, unmatched: false, displayNo: no });
     } else {
-      items.push({ key: `${idx}-${url}`, index: idx, no: idx + 1, season: 0, name, url });
+      items.push({ key: `${idx}-${url}`, index: idx, no: idx + 1, season: 0, name, url, unmatched: false, displayNo: idx + 1 });
     }
   }
 
   if (!items.length) return [];
 
   if (hasMagic) {
-    items.sort((a, b) => {
-      const sa = Number.isFinite(a.season) ? a.season : 0;
-      const sb = Number.isFinite(b.season) ? b.season : 0;
-      if (sa !== sb) return sa - sb;
+    const recognized = items.filter((it) => it && !it.unmatched && Number.isFinite(Number(it.no)) && Number(it.no) > 0);
+    const unrecognized = items.filter((it) => it && it.unmatched);
+
+    const seasonSet = new Set();
+    recognized.forEach((it) => {
+      const s = it && Number.isFinite(Number(it.season)) ? Number(it.season) : 0;
+      if (s > 0) seasonSet.add(s);
+    });
+    const multipleSeasons = seasonSet.size >= 2;
+
+    recognized.sort((a, b) => {
+      const saRaw = a && Number.isFinite(Number(a.season)) ? Number(a.season) : 0;
+      const sbRaw = b && Number.isFinite(Number(b.season)) ? Number(b.season) : 0;
+      const sa = multipleSeasons && saRaw === 0 ? 1000 : saRaw;
+      const sb = multipleSeasons && sbRaw === 0 ? 1000 : sbRaw;
+      if (multipleSeasons && sa !== sb) return sa - sb;
       return a.no === b.no ? a.index - b.index : a.no - b.no;
     });
-    if (episodeDescending.value) items.reverse();
-    return items;
+    if (episodeDescending.value) recognized.reverse();
+    return recognized.concat(unrecognized);
   }
 
   if (!episodeDescending.value) return items;
@@ -2072,6 +2099,7 @@ const displayedEpisodes = computed(() => {
 });
 
 const EPISODE_GROUP_SIZE = 50;
+const UNRECOGNIZED_EPISODE_GROUP_KEY = 'g_unrecognized';
 
 const episodeGroups = computed(() => {
   const hasMagic = hasMagicEpisodeRules.value;
@@ -2083,10 +2111,12 @@ const episodeGroups = computed(() => {
   };
 
   if (hasMagic) {
-    const maxNo = list.reduce((m, it) => (it && Number.isFinite(it.no) ? Math.max(m, it.no) : m), 0);
-    if (!maxNo) return [];
+    const recognized = list.filter((it) => it && !it.unmatched && Number.isFinite(Number(it.no)) && Number(it.no) > 0);
+    const unrecognized = list.filter((it) => it && it.unmatched);
+    const maxNo = recognized.reduce((m, it) => (it && Number.isFinite(Number(it.no)) ? Math.max(m, Number(it.no)) : m), 0);
+    if (!maxNo && !unrecognized.length) return [];
     const byIdx = new Map();
-    list.forEach((it) => {
+    recognized.forEach((it) => {
       const no = it && Number.isFinite(it.no) ? Number(it.no) : 0;
       if (!no) return;
       const idx = Math.floor((no - 1) / EPISODE_GROUP_SIZE);
@@ -2100,6 +2130,9 @@ const episodeGroups = computed(() => {
       return { key, startNo, endNo, label: makeLabel(startNo, endNo) };
     });
     if (episodeDescending.value) groups.reverse();
+    if (unrecognized.length) {
+      groups.push({ key: UNRECOGNIZED_EPISODE_GROUP_KEY, startNo: 0, endNo: 0, label: '未识别分类', unrecognized: true });
+    }
     return groups;
   }
 
@@ -2151,6 +2184,14 @@ const groupedDisplayedEpisodes = computed(() => {
   if (!list.length || !groups.length) return list;
   const g = groups.find((x) => x.key === selectedEpisodeGroupKey.value) || groups[0];
   if (!g) return list;
+  if (g.key === UNRECOGNIZED_EPISODE_GROUP_KEY || g.unrecognized) {
+    const unrecognized = list.filter((ep) => ep && ep.unmatched);
+    return unrecognized.map((ep, idx) => {
+      const displayNo = idx + 1;
+      if (ep && ep.displayNo === displayNo) return ep;
+      return { ...ep, displayNo };
+    });
+  }
   return list.filter((ep) => ep && ep.no >= g.startNo && ep.no <= g.endNo);
 });
 
