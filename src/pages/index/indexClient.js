@@ -367,6 +367,7 @@ function setupHomeSpiderBrowse() {
     const io = ensureContinueIo();
     const frag = document.createDocumentFragment();
     continueItems.forEach((it) => {
+      const contentKey = it && typeof it.contentKey === 'string' ? it.contentKey : '';
       const siteKey = it && typeof it.siteKey === 'string' ? it.siteKey : '';
       const spiderApi = it && typeof it.spiderApi === 'string' ? it.spiderApi : '';
       const videoId = it && typeof it.videoId === 'string' ? it.videoId : '';
@@ -376,6 +377,7 @@ function setupHomeSpiderBrowse() {
         wrapperClass: 'min-w-[96px] w-24 sm:min-w-[180px] sm:w-44',
         io,
         detail: {
+          contentKey,
           siteKey,
           spiderApi,
           videoId,

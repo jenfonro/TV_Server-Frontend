@@ -731,6 +731,10 @@ const syncMobileContextFromStorage = () => {
 	    hasScrollBeforePlay = true;
 	  }
 	  const d = e && e.detail && typeof e.detail === 'object' ? e.detail : {};
+    const prevParams = playParams.value && typeof playParams.value === 'object' ? playParams.value : {};
+    const prevContentKey = typeof prevParams.contentKey === 'string' ? prevParams.contentKey.trim() : '';
+    const nextContentKey = typeof d.contentKey === 'string' ? d.contentKey.trim() : '';
+
 	  playParams.value = {
 	    videoTitle: typeof d.videoTitle === 'string' ? d.videoTitle : '',
 	    videoYear: typeof d.videoYear === 'string' ? d.videoYear : '',
@@ -742,8 +746,10 @@ const syncMobileContextFromStorage = () => {
     videoPoster: typeof d.videoPoster === 'string' ? d.videoPoster : '',
     videoRemark: typeof d.videoRemark === 'string' ? d.videoRemark : '',
     videoPanDir: typeof d.videoPanDir === 'string' ? d.videoPanDir : '',
+    contentKey: typeof d.contentKey === 'string' ? d.contentKey : '',
 	  };
-	  playKey.value += 1;
+    const shouldReusePlayPage = !!(wasInPlay && prevContentKey && nextContentKey && prevContentKey === nextContentKey);
+    if (!shouldReusePlayPage) playKey.value += 1;
 	  isPlayView.value = true;
 	  if (!wasInPlay) {
 	    nextTick(() => {

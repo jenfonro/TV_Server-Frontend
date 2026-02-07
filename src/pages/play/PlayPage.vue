@@ -19,7 +19,7 @@
                 </button>
                 <div class="flex flex-1 items-center gap-2 min-w-0">
                   <h1 class="min-w-0 text-xl font-semibold text-gray-900 dark:text-gray-100">
-                    <span id="playTitle" class="block truncate">{{ videoTitle }}</span>
+                    <span id="playTitle" class="block truncate">{{ topLeftTitle }}</span>
                   </h1>
                   <button
                     type="button"
@@ -278,6 +278,9 @@
                             </div>
                           </div>
 	                        </div>
+                        <div v-if="introLoading" class="flex-shrink-0 w-5 h-5 flex items-center justify-center" aria-label="加载中">
+                          <div class="tv-spinner" aria-hidden="true"></div>
+                        </div>
                         <button
                           id="rawListBtn"
                           type="button"
@@ -288,6 +291,16 @@
                         >
                           {{ rawListMode ? '返回选集' : '原始列表' }}
                         </button>
+                        <select
+                          v-if="rawListMode && thirdPartyIsMobile && rawListPageOptions.length"
+                          v-model.number="rawListPage"
+                          class="episode-control episode-control--btn flex-shrink-0"
+                          aria-label="原始列表范围"
+                        >
+                          <option v-for="o in rawListPageOptions" :key="o.page" :value="o.page">
+                            {{ o.label }}
+                          </option>
+                        </select>
 	                      </div>
 	                      <div class="flex items-center gap-4 mb-4 border-b border-gray-300 dark:border-gray-700 -mx-6 px-6 flex-shrink-0" v-show="!rawListMode">
 	                        <div class="flex-1 min-w-0">
@@ -361,7 +374,7 @@
                         </button>
                       </div>
 
-	                      <div id="rawListView" class="raw-list flex-1 overflow-y-auto content-start pb-4" v-show="rawListMode">
+	                      <div id="rawListView" ref="rawListViewEl" class="raw-list flex-1 overflow-y-auto content-start pb-4" v-show="rawListMode">
 	                        <div v-if="introLoading" class="tv-center-loading">
 	                          <div class="tv-spinner" aria-hidden="true"></div>
 	                          <div class="tv-center-loading__text">加载中...</div>
@@ -370,13 +383,13 @@
 	                        <div v-else-if="rawListItems.length === 0" class="raw-list__hint">暂无原始列表</div>
 	                        <div v-else class="raw-list__items">
                           <button
-                            v-for="it in rawListItems"
+                            v-for="it in rawListPagedItems"
                             :key="it.key"
                             type="button"
                             class="raw-list__row"
                             :class="{ 'raw-list__row--active': it.index === selectedEpisodeIndex }"
                             :title="it.text"
-                            @click="selectEpisode(it.index)"
+                            @click="onRawListSelectEpisode(it.index)"
                           >
                             <span class="raw-list__text">{{ it.text }}</span>
                           </button>
@@ -424,10 +437,11 @@
 
                     <!-- Sources tab -->
                     <div id="sourcesTab" class="flex flex-col flex-1 min-h-0 pt-4" v-show="activeTab === 'sources'">
-                      <div class="flex-1 min-h-0 overflow-y-auto space-y-2 pb-6">
+                      <div ref="sourcesListEl" class="flex-1 min-h-0 overflow-y-auto space-y-2 pb-6">
                         <div
                           v-for="src in sourcesTabItems"
                           :key="`${src.siteKey}::${src.videoId}`"
+                          :ref="src.active ? setActiveSourceCardEl : null"
                           class="source-card flex items-start gap-3 px-2 py-3 rounded-lg transition-all select-none duration-200 relative"
                           :class="src.active ? 'source-card--active' : 'source-card--idle'"
                           @click="src.active ? null : switchAggregatedSource(src)"
@@ -586,7 +600,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onBeforeUnmount, onBeforeUpdate, ref, watch } from 'vue';
 import { initPlayPage } from './playClient.js';
 	import ArtPlayer from '../../shared/ArtPlayer.vue';
 import { normalizeCatPawOpenApiBase, requestCatPlay, requestCatSpider } from '../../shared/catpawopen';
@@ -605,6 +619,7 @@ const props = defineProps({
   videoPoster: { type: String, default: '' },
   videoRemark: { type: String, default: '' },
   videoPanDir: { type: String, default: '' },
+  contentKey: { type: String, default: '' },
 });
 
 const artPlayerRef = ref(null);
@@ -792,8 +807,53 @@ const normalizeForAggKey = (s) =>
     .replace(/[^0-9a-z\u4e00-\u9fa5]+/gi, '')
     .trim();
 
+const applyAggregateCleanRules = (title) => {
+  const raw = typeof title === 'string' ? title : String(title || '');
+  if (!raw) return '';
+  const rules = compiledMagicAggregateRegexRules.value;
+  let out = raw;
+  if (Array.isArray(rules) && rules.length) {
+    rules.forEach((re) => {
+      if (!re) return;
+      try {
+        if (re.global || re.sticky) re.lastIndex = 0;
+      } catch (_e) {}
+      try {
+        out = out.replace(re, '');
+      } catch (_e) {}
+    });
+  }
+  return String(out || '').trim();
+};
+
+const topLeftTitle = computed(() => {
+  const base = (displayTitle.value || props.videoTitle || '').trim();
+  const cleaned = applyAggregateCleanRules(base);
+  return cleaned || base || '未命名';
+});
+
+const getStableContentKey = () => {
+  const fromProps = normalizeForAggKey(props.contentKey || '');
+  if (fromProps) return fromProps;
+  const fromHistory = normalizeForAggKey(resumeHistory.value && resumeHistory.value.contentKey ? resumeHistory.value.contentKey : '');
+  if (fromHistory) return fromHistory;
+  const base = computeHistoryContentKey(props.videoTitle || '');
+  if (base) return base;
+  return normalizeForAggKey(props.videoTitle || '');
+};
+
+const getSourcesSearchQuery = () => {
+  const cleaned = applyAggregateCleanRules(props.videoTitle || '');
+  if (cleaned) return cleaned;
+  const fromHistory = resumeHistory.value && typeof resumeHistory.value.contentKey === 'string' ? resumeHistory.value.contentKey.trim() : '';
+  if (fromHistory) return fromHistory;
+  const fromProps = typeof props.contentKey === 'string' ? props.contentKey.trim() : '';
+  if (fromProps) return fromProps;
+  return (props.videoTitle || '').trim();
+};
+
 const loadAggregatedSourcesFromStorage = () => {
-  const titleKey = normalizeForAggKey(displayTitle.value || props.videoTitle || '');
+  const titleKey = getStableContentKey();
   if (!titleKey) {
     aggregatedSources.value = [];
     aggregatedFromStorage.value = false;
@@ -802,8 +862,8 @@ const loadAggregatedSourcesFromStorage = () => {
   try {
     const raw = sessionStorage.getItem(AGG_STORAGE_KEY);
     const parsed = raw && raw.trim() ? JSON.parse(raw) : null;
-    const parsedKey = parsed && typeof parsed.key === 'string' ? parsed.key.trim() : '';
-    const groups = parsed && parsed.groups && typeof parsed.groups === 'object' ? parsed.groups : null;
+    const parsedKey = parsed && typeof parsed.lastKey === 'string' ? parsed.lastKey.trim() : parsed && typeof parsed.key === 'string' ? parsed.key.trim() : '';
+    const groups = parsed && parsed.version === 2 && parsed.groups && typeof parsed.groups === 'object' ? parsed.groups : parsed && parsed.groups && typeof parsed.groups === 'object' ? parsed.groups : null;
     const group = groups && groups[titleKey] && typeof groups[titleKey] === 'object' ? groups[titleKey] : null;
     const activeKey = group ? titleKey : parsedKey;
     if (!activeKey || activeKey !== titleKey) {
@@ -880,8 +940,8 @@ const normalizeSearchList = (data) => {
 
 const fetchAggregatedSourcesExactMatches = async () => {
   if (sourcesLoading.value) return;
-  const qRaw = (displayTitle.value || props.videoTitle || '').trim();
-  const qKey = normalizeForAggKey(qRaw);
+  const qRaw = getSourcesSearchQuery();
+  const qKey = getStableContentKey();
   if (!qRaw || !qKey) return;
 
   sourcesSearchState.seq += 1;
@@ -971,15 +1031,14 @@ const fetchAggregatedSourcesExactMatches = async () => {
     sourcesSearchedOnce.value = true;
 
     try {
-      sessionStorage.setItem(
-        AGG_STORAGE_KEY,
-        JSON.stringify({
-          q: qRaw,
-          key: qKey,
-          createdAt: Date.now(),
-          sources: out,
-        })
-      );
+      const prevRaw = sessionStorage.getItem(AGG_STORAGE_KEY) || '';
+      const prev = prevRaw && prevRaw.trim() ? JSON.parse(prevRaw) : null;
+      const groups =
+        prev && prev.version === 2 && prev.groups && typeof prev.groups === 'object'
+          ? { ...prev.groups }
+          : {};
+      groups[qKey] = { sources: out, updatedAt: Date.now(), q: qRaw };
+      sessionStorage.setItem(AGG_STORAGE_KEY, JSON.stringify({ version: 2, q: qRaw, groups, lastKey: qKey }));
     } catch (_e) {}
   } catch (e) {
     if (seqAtCall === sourcesSearchState.seq) {
@@ -1114,8 +1173,43 @@ const introError = ref('');
 const introText = ref((props.videoIntro || '').trim());
 const rawListMode = ref(false);
 const autoRawListMode = ref(false);
+const viewModeTouchedKey = ref('');
 const activeTab = ref('episodes');
 const episodeDescending = ref(false);
+const sourcesListEl = ref(null);
+const activeSourceCardEl = ref(null);
+const rawListViewEl = ref(null);
+const RAW_LIST_PAGE_SIZE = 20;
+const rawListPage = ref(0);
+const setActiveSourceCardEl = (el) => {
+  if (el) activeSourceCardEl.value = el;
+};
+
+const scrollSourcesToActive = async (opts = {}) => {
+  const { behavior = 'auto' } = opts && typeof opts === 'object' ? opts : {};
+  await nextTick();
+  const container = sourcesListEl.value;
+  const el = activeSourceCardEl.value;
+  if (!container || !el) return;
+  try {
+    const cRect = container.getBoundingClientRect();
+    const eRect = el.getBoundingClientRect();
+    const fullyVisible = eRect.top >= cRect.top && eRect.bottom <= cRect.bottom;
+    if (fullyVisible) return;
+
+    const targetTop =
+      container.scrollTop + (eRect.top - cRect.top) - (container.clientHeight / 2 - el.clientHeight / 2);
+    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    const top = Math.max(0, Math.min(maxTop, Math.round(targetTop)));
+    if (Math.abs(container.scrollTop - top) <= 2) return;
+    if (typeof container.scrollTo === 'function') container.scrollTo({ top, behavior });
+    else container.scrollTop = top;
+  } catch (_e) {}
+};
+
+onBeforeUpdate(() => {
+  activeSourceCardEl.value = null;
+});
 const selectedEpisodeIndex = ref(0);
 const autoPickedEpisodeFromVideoId = ref(false);
 const playLoading = ref(false);
@@ -1161,8 +1255,51 @@ const resolvedSpiderApi = computed(() => {
     ? props.bootstrap.settings.homeSites
     : [];
   const found = sites.find((s) => s && s.key === key);
-  return found && found.api ? String(found.api) : '';
+  const fromHome = found && found.api ? String(found.api) : '';
+  return fromHome;
 });
+
+const resolvedSpiderApiFallback = ref('');
+const ensureResolvedSpiderApiFallback = async () => {
+  try {
+    if ((props.spiderApi || '').trim()) return;
+    if (resolvedSpiderApiFallback.value) return;
+    const siteKey = (props.siteKey || '').trim();
+    if (!siteKey) return;
+    const data = await fetchUserSitesCached(10 * 1000);
+    const sites = Array.isArray(data && data.sites) ? data.sites : [];
+    const found = sites.find((s) => s && String(s.key || '').trim() === siteKey) || null;
+    const api = found && typeof found.api === 'string' ? found.api.trim() : '';
+    if (api) resolvedSpiderApiFallback.value = api;
+  } catch (_e) {}
+};
+
+const resolvedSpiderApiFinal = computed(() => {
+  const direct = (props.spiderApi || '').trim();
+  if (direct) return direct;
+  const fromHome = resolvedSpiderApi.value;
+  if (fromHome) return fromHome;
+  return (resolvedSpiderApiFallback.value || '').trim();
+});
+
+watch(
+  () => `${(props.siteKey || '').trim()}|${(props.spiderApi || '').trim()}`,
+  () => {
+    resolvedSpiderApiFallback.value = '';
+    void ensureResolvedSpiderApiFallback();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => (resumeHistory.value && typeof resumeHistory.value.spiderApi === 'string' ? resumeHistory.value.spiderApi.trim() : ''),
+  (api) => {
+    if ((props.spiderApi || '').trim()) return;
+    if (resolvedSpiderApi.value) return;
+    if (resolvedSpiderApiFallback.value) return;
+    if (api) resolvedSpiderApiFallback.value = api;
+  }
+);
 
 const resolvedSiteName = computed(() => {
   const key = (props.siteKey || '').trim();
@@ -1197,28 +1334,29 @@ const sourcesTabItems = computed(() => {
     if (kk && !orderMap.has(kk)) orderMap.set(kk, idx);
   });
 
-  const others = (aggregatedSources.value || [])
-    .filter((s) => !(s.siteKey === currentSiteKey && s.videoId === currentVideoId))
-    .slice()
-    .sort((a, b) => {
-      const ao = orderMap.has(a.siteKey) ? orderMap.get(a.siteKey) : 999999;
-      const bo = orderMap.has(b.siteKey) ? orderMap.get(b.siteKey) : 999999;
-      if (ao !== bo) return ao - bo;
-      return (a.siteName || a.siteKey).localeCompare(b.siteName || b.siteKey, 'zh');
-    });
+  const list = [];
+  const uniq = new Set();
+  const pushOne = (x) => {
+    if (!x || !x.siteKey || !x.spiderApi || !x.videoId) return;
+    const k = `${x.siteKey}::${x.videoId}`;
+    if (uniq.has(k)) return;
+    uniq.add(k);
+    list.push(x);
+  };
 
-  const list = [
-    {
-      active: true,
-      siteKey: currentSiteKey,
-      spiderApi: resolvedSpiderApi.value,
-      siteName: resolvedSiteName.value || '站点',
-      videoId: currentVideoId,
-      title: displayTitle.value || '未命名',
-      poster: displayPoster.value,
-      remark: (detail.value.remark || props.videoRemark || '').trim(),
-    },
-    ...others.map((s) => ({
+  pushOne({
+    active: true,
+    siteKey: currentSiteKey,
+    spiderApi: resolvedSpiderApiFinal.value,
+    siteName: resolvedSiteName.value || '站点',
+    videoId: currentVideoId,
+    title: displayTitle.value || '未命名',
+    poster: displayPoster.value,
+    remark: (detail.value.remark || props.videoRemark || '').trim(),
+  });
+
+  (aggregatedSources.value || []).forEach((s) => {
+    pushOne({
       active: false,
       siteKey: s.siteKey,
       spiderApi: s.spiderApi,
@@ -1227,9 +1365,18 @@ const sourcesTabItems = computed(() => {
       title: s.videoTitle || '未命名',
       poster: processPosterUrl(s.videoPoster || ''),
       remark: (s.videoRemark || '').trim(),
-    })),
-  ];
-  return list.filter((x) => x && x.siteKey && x.spiderApi && x.videoId);
+    });
+  });
+
+  return list
+    .filter((x) => x && x.siteKey && x.spiderApi && x.videoId)
+    .slice()
+    .sort((a, b) => {
+      const ao = orderMap.has(a.siteKey) ? orderMap.get(a.siteKey) : 999999;
+      const bo = orderMap.has(b.siteKey) ? orderMap.get(b.siteKey) : 999999;
+      if (ao !== bo) return ao - bo;
+      return (a.siteName || a.siteKey).localeCompare(b.siteName || b.siteKey, 'zh');
+    });
 });
 
 const switchAggregatedSource = (src) => {
@@ -1244,6 +1391,7 @@ const switchAggregatedSource = (src) => {
           videoTitle: src.title || '',
           videoPoster: src.poster || '',
           videoRemark: src.remark || '',
+          contentKey: getStableContentKey(),
         },
       })
     );
@@ -1361,7 +1509,7 @@ const tryLockHistoryPoster = async (opts = {}) => {
 
 const canFavorite = computed(() => {
   const siteKey = (props.siteKey || '').trim();
-  const spiderApi = (resolvedSpiderApi.value || '').trim();
+  const spiderApi = (resolvedSpiderApiFinal.value || '').trim();
   const videoId = (props.videoId || '').trim();
   const title = displayTitle.value || '';
   return !!(siteKey && spiderApi && videoId && title);
@@ -1408,7 +1556,7 @@ const toggleFavorite = async () => {
   favoriteLoading.value = true;
   try {
     const siteKey = (props.siteKey || '').trim();
-    const spiderApi = (resolvedSpiderApi.value || '').trim();
+    const spiderApi = (resolvedSpiderApiFinal.value || '').trim();
     const videoId = (props.videoId || '').trim();
     const videoTitle = displayTitle.value || '';
     const data = await apiPostJson(
@@ -1667,6 +1815,37 @@ const findPanKeyByPrefLabel = (prefLabel) => {
   return '';
 };
 
+const EP_VIEW_MODE_STORAGE_PREFIX = 'meowfilm_episode_view_mode::';
+const episodeViewModeStorageKey = computed(() => {
+  const k = computeHistoryContentKey(displayTitle.value) || normalizeContentKeyForPanPref(displayTitle.value);
+  return k ? `${EP_VIEW_MODE_STORAGE_PREFIX}${k}` : '';
+});
+const readEpisodeViewMode = () => {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return '';
+    const key = episodeViewModeStorageKey.value;
+    if (!key) return '';
+    const v = String(window.localStorage.getItem(key) || '').trim().toLowerCase();
+    if (v === 'raw' || v === 'episodes') return v;
+    return '';
+  } catch (_e) {
+    return '';
+  }
+};
+const writeEpisodeViewMode = (mode) => {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    const key = episodeViewModeStorageKey.value;
+    if (!key) return;
+    const v = String(mode || '').trim().toLowerCase();
+    if (v !== 'raw' && v !== 'episodes') {
+      window.localStorage.removeItem(key);
+      return;
+    }
+    window.localStorage.setItem(key, v);
+  } catch (_e) {}
+};
+
 watch(
   () => `${isIos.value ? '1' : '0'}|${panOptions.value.length}|${selectedPan.value}`,
   () => {
@@ -1681,6 +1860,10 @@ watch(
 const toggleRawList = (e) => {
   rawListMode.value = !rawListMode.value;
   autoRawListMode.value = false;
+  if (!forceRawListMode.value) {
+    writeEpisodeViewMode(rawListMode.value ? 'raw' : 'episodes');
+    viewModeTouchedKey.value = episodeViewModeStorageKey.value || '';
+  }
   try {
     if (e && e.currentTarget && typeof e.currentTarget.blur === 'function') e.currentTarget.blur();
   } catch (_e) {}
@@ -2036,7 +2219,7 @@ const contentKind = computed(() => {
   return 'unknown';
 });
 
-const computeHistoryContentKey = (title) => {
+function computeHistoryContentKey(title) {
   const raw = typeof title === 'string' ? title : String(title || '');
   if (!raw) return '';
   const rules = compiledMagicAggregateRegexRules.value;
@@ -2053,12 +2236,11 @@ const computeHistoryContentKey = (title) => {
     });
   }
   return normalizeForAggKey(out);
-};
+}
 
 const forceRawListMode = computed(() => {
   if (contentKind.value === 'movie') return true;
-  if (contentKind.value === 'unknown') return maxPanEpisodeCount.value <= 10;
-  return false; // series
+  return false;
 });
 
 watch(
@@ -2768,6 +2950,26 @@ const allDisplayedEpisodes = computed(() => {
   if (!episodeDescending.value) return items;
   return items.slice().reverse();
 });
+
+watch(
+  () => `${episodeViewModeStorageKey.value}|${forceRawListMode.value ? '1' : '0'}|${selectedEpisodes.value.length}`,
+  () => {
+    const key = episodeViewModeStorageKey.value;
+    if (!key) return;
+    if (forceRawListMode.value) {
+      rawListMode.value = true;
+      autoRawListMode.value = false;
+      return;
+    }
+    // Don't override the current session after the user explicitly toggled.
+    if (viewModeTouchedKey.value === key) return;
+
+    const saved = readEpisodeViewMode();
+    rawListMode.value = saved === 'raw';
+    autoRawListMode.value = false;
+  },
+  { immediate: true }
+);
 
 const seasonTabs = computed(() => {
   const list = allDisplayedEpisodes.value;
@@ -3629,7 +3831,7 @@ const playRequestState = {
 };
 
 const requestPlay = async () => {
-  const api = resolvedSpiderApi.value;
+  const api = resolvedSpiderApiFinal.value;
   const src = selectedPanSource.value;
   const eps = selectedEpisodes.value;
   const idx = selectedEpisodeIndex.value;
@@ -3641,11 +3843,11 @@ const requestPlay = async () => {
         ? String(src.label)
         : '';
   const id = ep && ep.url ? String(ep.url) : '';
-  if (!api || !flag || !id) return;
+  if (!api || !flag || !id) return false;
   const playKey = `${api}::${selectedPanKey.value}::${idx}::${flag}::${id}`;
   if (playRequestState.inFlight && playRequestState.inFlightKey === playKey) {
     await playRequestState.inFlight;
-    return;
+    return true;
   }
   const panKeyAtCall = selectedPanKey.value;
   const idxAtCall = idx;
@@ -3814,6 +4016,21 @@ const requestPlay = async () => {
   } finally {
     if (playRequestState.inFlight === run) playRequestState.inFlight = null;
   }
+  return true;
+};
+
+const tryAutoStartPlayback = () => {
+  if (initialAutoPlayTriggered.value) return;
+  if (introLoading.value) return;
+  if (!resumeHistoryLoaded.value) return;
+  if (!selectedEpisodes.value.length) return;
+  void ensureResolvedSpiderApiFallback();
+  if (!resolvedSpiderApiFinal.value) return;
+  if (selectedEpisodeIndex.value < 0) selectedEpisodeIndex.value = 0;
+  void requestPlay().then((started) => {
+    if (!started) return;
+    initialAutoPlayTriggered.value = true;
+  });
 };
 
 const onPlayerLoadedMetadata = () => {
@@ -3874,7 +4091,7 @@ const playerPhaseLoading = computed(() => {
 const playerPhaseText = computed(() => {
   switch (playerPhase.value) {
     case 'detail':
-      return '视频加载中...';
+      return '正在获取视频信息...';
     case 'play_url':
       return '正在获取播放地址...';
     case 'play_info':
@@ -3987,6 +4204,7 @@ const loadResumeFromHistory = async () => {
     if (seqAtCall === resumeHistoryState.seq) resumeHistoryLoaded.value = true;
     if (resumeHistoryState.key === key && resumeHistoryState.seq === seqAtCall) resumeHistoryState.inFlight = null;
   }
+  tryAutoStartPlayback();
 };
 
 watch(
@@ -4021,6 +4239,7 @@ watch(
       resumeHistoryLoaded.value ? '1' : '0',
       panPrefStorageKey.value,
       selectedPanKey.value,
+      resolvedSpiderApiFinal.value,
       selectedEpisodes.value.length,
       selectedEpisodeIndex.value,
     ].join('|'),
@@ -4122,9 +4341,7 @@ watch(
 	      if (prevPan !== selectedPan.value || prevIdx !== selectedEpisodeIndex.value) return;
 	    }
 
-    if (selectedEpisodeIndex.value < 0) selectedEpisodeIndex.value = 0;
-    initialAutoPlayTriggered.value = true;
-    requestPlay();
+    tryAutoStartPlayback();
   }
 );
 
@@ -4228,6 +4445,53 @@ const rawListItems = computed(() => {
   });
 });
 
+const rawListPageOptions = computed(() => {
+  if (!rawListMode.value) return [];
+  if (!thirdPartyIsMobile.value) return [];
+  const total = rawListItems.value.length;
+  if (total <= RAW_LIST_PAGE_SIZE) return [];
+  const pages = Math.ceil(total / RAW_LIST_PAGE_SIZE);
+  const out = [];
+  for (let p = 0; p < pages; p += 1) {
+    const start = p * RAW_LIST_PAGE_SIZE + 1;
+    const end = Math.min(total, (p + 1) * RAW_LIST_PAGE_SIZE);
+    out.push({ page: p, label: `${start}-${end}` });
+  }
+  return out;
+});
+
+const rawListPagedItems = computed(() => {
+  const items = rawListItems.value;
+  const total = items.length;
+  if (!rawListMode.value) return [];
+  if (!thirdPartyIsMobile.value) return items;
+  if (total <= RAW_LIST_PAGE_SIZE) return items;
+  const p = Number.isFinite(Number(rawListPage.value)) ? Math.max(0, Math.floor(Number(rawListPage.value))) : 0;
+  const pages = Math.max(1, Math.ceil(total / RAW_LIST_PAGE_SIZE));
+  const page = Math.min(p, pages - 1);
+  const startIdx = page * RAW_LIST_PAGE_SIZE;
+  return items.slice(startIdx, startIdx + RAW_LIST_PAGE_SIZE);
+});
+
+watch(
+  () => `${rawListMode.value ? '1' : '0'}|${thirdPartyIsMobile.value ? '1' : '0'}|${rawListItems.value.length}`,
+  () => {
+    rawListPage.value = 0;
+  }
+);
+
+watch(
+  () => `${rawListMode.value ? '1' : '0'}|${thirdPartyIsMobile.value ? '1' : '0'}|${selectedEpisodeIndex.value}`,
+  () => {
+    if (!rawListMode.value) return;
+    if (!thirdPartyIsMobile.value) return;
+    const idx = Number.isFinite(Number(selectedEpisodeIndex.value)) ? Math.floor(Number(selectedEpisodeIndex.value)) : 0;
+    if (idx < 0) return;
+    const nextPage = Math.floor(idx / RAW_LIST_PAGE_SIZE);
+    if (nextPage !== rawListPage.value) rawListPage.value = nextPage;
+  }
+);
+
 const selectEpisode = (idx) => {
   const n = Number(idx);
   if (!Number.isFinite(n) || n < 0) return;
@@ -4244,6 +4508,31 @@ const selectEpisode = (idx) => {
   }
   selectedEpisodeIndex.value = n;
   requestPlay();
+};
+
+const onRawListSelectEpisode = (idx) => {
+  selectEpisode(idx);
+  if (!thirdPartyIsMobile.value) return;
+  if (!rawListMode.value) return;
+  try {
+    const el = rawListViewEl.value;
+    if (!el) return;
+    const scrollTop = () => {
+      try {
+        if (typeof el.scrollTo === 'function') el.scrollTo({ top: 0, behavior: 'smooth' });
+        else el.scrollTop = 0;
+      } catch (_e) {
+        try {
+          el.scrollTop = 0;
+        } catch (_e2) {}
+      }
+    };
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(scrollTop));
+    } else {
+      setTimeout(scrollTop, 0);
+    }
+  } catch (_e) {}
 };
 
 const extractIntroFromDetail = (data) => {
@@ -4289,7 +4578,7 @@ const extractDetailFromResponse = (data) => {
 const detailFetchState = { key: '', seq: 0, inFlight: null };
 
 const contentKeyFromProps = () => {
-  const t = normalizeForAggKey(props.videoTitle || '');
+  const t = getStableContentKey();
   const y = String(props.videoYear || '').trim();
   const ty = String(props.searchType || '').trim();
   return [t, y, ty].join('|');
@@ -4301,7 +4590,7 @@ const fetchDetailForCurrentVideo = async (opts = {}) => {
   const { updateIntro = false, updateMeta = false } = opts && typeof opts === 'object' ? opts : {};
   const id = (props.videoId || '').trim();
   if (!id) return;
-  const api = (resolvedSpiderApi.value || '').trim();
+  const api = (resolvedSpiderApiFinal.value || '').trim();
   if (!api) return;
 
   const apiBase = resolveCatApiBaseForPlay();
@@ -4315,7 +4604,8 @@ const fetchDetailForCurrentVideo = async (opts = {}) => {
   detailFetchState.seq += 1;
   const seqAtCall = detailFetchState.seq;
   detailFetchState.key = key;
-  if (updateIntro) {
+  const shouldShowDetailLoading = !!(updateIntro || updateMeta || !detail.value.playFrom);
+  if (shouldShowDetailLoading) {
     introLoading.value = true;
     introError.value = '';
   }
@@ -4355,15 +4645,16 @@ const fetchDetailForCurrentVideo = async (opts = {}) => {
     } catch (e) {
       const status = e && typeof e.status === 'number' ? e.status : 0;
       const msg = (e && e.message) || '请求失败';
-      if (updateIntro && seqAtCall === detailFetchState.seq) {
+      if (shouldShowDetailLoading && seqAtCall === detailFetchState.seq) {
         introError.value = status ? `HTTP ${status}：${msg}` : msg;
       }
     } finally {
-      if (updateIntro && seqAtCall === detailFetchState.seq) introLoading.value = false;
+      if (shouldShowDetailLoading && seqAtCall === detailFetchState.seq) introLoading.value = false;
       if (detailFetchState.key === key && detailFetchState.seq === seqAtCall) detailFetchState.inFlight = null;
     }
   })();
   await detailFetchState.inFlight;
+  tryAutoStartPlayback();
 };
 
 const searchTypeLabel = computed(() => {
@@ -4677,23 +4968,32 @@ onMounted(() => {
 });
 
 watch(
-  () => displayTitle.value,
+  () => getStableContentKey(),
   () => {
     if (sourcesLoading.value) return;
     loadAggregatedSourcesFromStorage();
-  }
+  },
+  { immediate: true }
 );
 
 watch(
   () => activeTab.value,
-  (v) => {
+  async (v) => {
     if (v !== 'sources') return;
     if (sourcesLoading.value) return;
+    loadAggregatedSourcesFromStorage();
     // If we already have sources from search storage, do not auto-fetch.
-    if (aggregatedSources.value && aggregatedSources.value.length) return;
+    if (aggregatedSources.value && aggregatedSources.value.length) {
+      await scrollSourcesToActive({ behavior: 'auto' });
+      return;
+    }
     // Avoid repeatedly spamming search when users just toggle tabs.
-    if (sourcesSearchedOnce.value) return;
-    void fetchAggregatedSourcesExactMatches();
+    if (sourcesSearchedOnce.value) {
+      await scrollSourcesToActive({ behavior: 'auto' });
+      return;
+    }
+    await fetchAggregatedSourcesExactMatches();
+    await scrollSourcesToActive({ behavior: 'auto' });
   }
 );
 
@@ -4707,9 +5007,13 @@ watch(
     const isNewContent = !!nextContentKey && nextContentKey !== lastContentKey;
     lastContentKey = nextContentKey;
 
-    invalidateSourcesSearch();
-    sourcesSearchedOnce.value = false;
-    sourcesError.value = '';
+    // Only invalidate the aggregated-source search when the *content* changes.
+    // Switching sources within the same content should not restart a full search.
+    if (isNewContent) {
+      invalidateSourcesSearch();
+      sourcesSearchedOnce.value = false;
+      sourcesError.value = '';
+    }
 
     const prevIdx = Number.isFinite(selectedEpisodeIndex.value) ? Math.floor(selectedEpisodeIndex.value) : 0;
     if (isNewContent) {
@@ -4722,7 +5026,8 @@ watch(
       void fetchDetailForCurrentVideo({ updateIntro: false, updateMeta: false });
     }
     void loadResumeFromHistory();
-  }
+  },
+  { immediate: true }
 );
 
 onBeforeUnmount(() => {
