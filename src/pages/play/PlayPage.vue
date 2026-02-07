@@ -1770,6 +1770,14 @@ const magicEpisodeCleanRegexRules = computed(() => {
   return [];
 });
 
+const magicAggregateRegexRules = computed(() => {
+  const listRaw = props.bootstrap?.settings?.magicAggregateRegexRules;
+  const list = Array.isArray(listRaw) ? listRaw : [];
+  return list
+    .map((x) => (typeof x === 'string' ? x.trim() : ''))
+    .filter(Boolean);
+});
+
 // Users often paste patterns that contain doubled backslashes like `\\d` (from JSON/JS literals).
 // Normalize common escapes: treat `\\d` as `\d`, `\\[` as `\[`, etc.
 const normalizeRegexText = (text) => {
@@ -1780,6 +1788,38 @@ const normalizeRegexText = (text) => {
 
 const compiledMagicEpisodeCleanRegexRules = computed(() => {
   const list = Array.isArray(magicEpisodeCleanRegexRules.value) ? magicEpisodeCleanRegexRules.value : [];
+  if (!list.length) return [];
+
+  const compile = (pattern, flags) => {
+    const p = typeof pattern === 'string' ? pattern : '';
+    if (!p) return null;
+    const f = typeof flags === 'string' ? flags : '';
+    const withGlobal = f.includes('g') ? f : `${f}g`;
+    try {
+      return new RegExp(normalizeRegexText(p), withGlobal || 'g');
+    } catch (_e) {
+      return null;
+    }
+  };
+
+  return list
+    .map((raw) => {
+      const s = typeof raw === 'string' ? raw.trim() : '';
+      if (!s) return null;
+      const asLiteral = s.startsWith('/') && s.lastIndexOf('/') > 0;
+      if (asLiteral) {
+        const last = s.lastIndexOf('/');
+        const pattern = s.slice(1, last);
+        const flags = s.slice(last + 1) || 'i';
+        return compile(pattern, flags);
+      }
+      return compile(s, 'i');
+    })
+    .filter(Boolean);
+});
+
+const compiledMagicAggregateRegexRules = computed(() => {
+  const list = Array.isArray(magicAggregateRegexRules.value) ? magicAggregateRegexRules.value : [];
   if (!list.length) return [];
 
   const compile = (pattern, flags) => {
@@ -1995,6 +2035,25 @@ const contentKind = computed(() => {
 
   return 'unknown';
 });
+
+const computeHistoryContentKey = (title) => {
+  const raw = typeof title === 'string' ? title : String(title || '');
+  if (!raw) return '';
+  const rules = compiledMagicAggregateRegexRules.value;
+  let out = raw;
+  if (Array.isArray(rules) && rules.length) {
+    rules.forEach((re) => {
+      if (!re) return;
+      try {
+        if (re.global || re.sticky) re.lastIndex = 0;
+      } catch (_e) {}
+      try {
+        out = out.replace(re, '');
+      } catch (_e) {}
+    });
+  }
+  return normalizeForAggKey(out);
+};
 
 const forceRawListMode = computed(() => {
   if (contentKind.value === 'movie') return true;
@@ -3645,6 +3704,7 @@ const requestPlay = async () => {
 			          spiderApi,
 			          videoId,
 			          videoTitle,
+			          contentKey: computeHistoryContentKey(videoTitle) || '',
 			          videoPoster: historyCoverPoster.value || pickHistoryPoster() || '',
 			          videoRemark: (props.videoRemark || '').trim(),
 			          panLabel: (src && src.label ? String(src.label) : '').trim(),
