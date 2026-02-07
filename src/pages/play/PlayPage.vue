@@ -1954,7 +1954,7 @@ const compiledSmartPanMatchTokens = computed(() => {
 });
 
 const STRONG_SERIES_RE_S_E = /\bS\d{1,2}\s*E\d{1,4}\b/i;
-const STRONG_SERIES_RE_CN = /第\s*\d{1,4}\s*(?:集|话|回|期)/;
+const STRONG_SERIES_RE_CN = /第\s*(?:\d{1,4}|[一二三四五六七八九十百千两零〇]{1,8})\s*(?:集|话|回|期)/;
 const STRONG_SERIES_RE_EP = /\b(?:EP|E)\s*\d{1,4}\b/i;
 
 const extractEpisodeCandidateTexts = (ep) => {
@@ -2113,6 +2113,79 @@ const cleanMagicEpisodeText = (text, cleanRules) => {
   }
 };
 
+const parseChineseNumeralToInt = (text) => {
+  const raw = typeof text === 'string' ? text : String(text || '');
+  const s = raw.replace(/\s+/g, '').replace(/两/g, '二').replace(/〇/g, '零');
+  if (!s) return 0;
+
+  const digit = (ch) => {
+    switch (ch) {
+      case '零':
+        return 0;
+      case '一':
+        return 1;
+      case '二':
+        return 2;
+      case '三':
+        return 3;
+      case '四':
+        return 4;
+      case '五':
+        return 5;
+      case '六':
+        return 6;
+      case '七':
+        return 7;
+      case '八':
+        return 8;
+      case '九':
+        return 9;
+      default:
+        return -1;
+    }
+  };
+
+  const parseSection = (sec) => {
+    let total = 0;
+    let num = 0;
+    for (let i = 0; i < sec.length; i += 1) {
+      const ch = sec[i];
+      const d = digit(ch);
+      if (d >= 0) {
+        num = d;
+        continue;
+      }
+      let unit = 0;
+      if (ch === '十') unit = 10;
+      else if (ch === '百') unit = 100;
+      else if (ch === '千') unit = 1000;
+      else if (ch === '零') unit = 0;
+      else return NaN;
+
+      if (!unit) continue;
+      if (!num) num = 1;
+      total += num * unit;
+      num = 0;
+    }
+    return total + num;
+  };
+
+  if (s.includes('万')) {
+    const parts = s.split('万');
+    if (!parts.length || parts.length > 2) return 0;
+    const left = parts[0] || '';
+    const right = parts[1] || '';
+    const a = left ? parseSection(left) : 0;
+    const b = right ? parseSection(right) : 0;
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+    const n = a * 10000 + b;
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  }
+
+  const n = parseSection(s);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+};
+
 const extractSeasonEpisodeFromText = (text, rules, cleanRules) => {
   const s = cleanMagicEpisodeText(text, cleanRules);
   if (!s || !Array.isArray(rules) || !rules.length) return { season: 0, episode: 0 };
@@ -2153,8 +2226,15 @@ const extractSeasonEpisodeFromText = (text, rules, cleanRules) => {
       String(m[0] || '');
     const season = seasonFrom(m.length > 1 ? m[1] : '') || seasonFrom(picked) || seasonFrom(m[0] || '') || 0;
     const digits = String(picked || '').trim().replace(/\D+/g, '');
-    if (!digits) continue;
-    const episode = Number.parseInt(digits, 10);
+    if (digits) {
+      const episode = Number.parseInt(digits, 10);
+      if (Number.isFinite(episode) && episode >= 1 && episode <= 99999) return { season, episode };
+      continue;
+    }
+
+    const cn = String(picked || '').match(/第\s*([一二三四五六七八九十百千两零〇万]{1,16})\s*(?:集|话|回|期)/);
+    if (!cn || !cn[1]) continue;
+    const episode = parseChineseNumeralToInt(cn[1]);
     if (Number.isFinite(episode) && episode >= 1 && episode <= 99999) return { season, episode };
   }
   return { season: 0, episode: 0 };
