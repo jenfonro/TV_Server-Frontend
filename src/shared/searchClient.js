@@ -181,7 +181,7 @@ export function initSearchPage() {
       wrapper.className = 'w-full';
       wrapper.dataset.siteKey = siteKey || '';
       wrapper.dataset.videoId = id || '';
-      if (it && typeof it.__aggKey === 'string' && it.__aggKey) wrapper.dataset.titleAggKey = it.__aggKey;
+      if (it && typeof it.__groupKey === 'string' && it.__groupKey) wrapper.dataset.titleAggKey = it.__groupKey;
       if (isAggregate) wrapper.dataset.aggregate = '1';
       wrapper.dataset.siteOrder = String(
         Number.isFinite(Number(siteOrderOverride))
@@ -190,10 +190,14 @@ export function initSearchPage() {
             ? siteOrderMap.get(siteKey)
             : 999999
       );
-      if (typeof computeMatchScore === 'function' && computeMatchScore(it && it.name ? it.name : '') === 1000) {
+      const titleText = it && it.name ? String(it.name) : '';
+      const fallbackTitleLen = titleText.replace(/[\s\u200b\u200c\u200d\ufeff]+/g, '').length;
+      const titleLen = Number.isFinite(Number(it && it.__titleLen)) ? Number(it.__titleLen) : fallbackTitleLen;
+      wrapper.dataset.titleLen = String(Math.max(0, Math.floor(titleLen)));
+      if (typeof computeMatchScore === 'function' && computeMatchScore(titleText) === 1000) {
         wrapper.dataset.exactMatch = '1';
       }
-      const name = it && it.name ? String(it.name) : '';
+      const name = titleText;
       const cardWrapper = createPosterCard({
         wrapperEl: wrapper,
         wrapperClass: 'w-full',
@@ -277,13 +281,109 @@ export function initSearchPage() {
         .toLowerCase()
         .replace(/[\s\u200b\u200c\u200d\ufeff]+/g, '')
         .trim();
-    // 聚合“百分百匹配”不走后台净化/魔法规则；仅做基础空白字符/零宽字符清理，避免肉眼一致却不相等。
-    const normalizeForAggregateKey = (s) =>
-      String(s || '')
-        .replace(/[\s\u200b\u200c\u200d\ufeff]+/g, '')
-        .trim();
     const qNorm = normalizeForMatch(q);
-    const qAggKey = normalizeForAggregateKey(q);
+
+    const normalizePatternInput = (text) => {
+      const raw = typeof text === 'string' ? text.trim() : '';
+      if (!raw) return null;
+      if (raw.startsWith('/') && raw.lastIndexOf('/') > 0) {
+        const last = raw.lastIndexOf('/');
+        const pattern = raw.slice(1, last).trim();
+        const flags = raw.slice(last + 1).trim();
+        if (!pattern) return null;
+        return { pattern, flags };
+      }
+      return { pattern: raw };
+    };
+
+    const buildRegexFromInput = (raw, { defaultFlags = '', forceGlobal = false } = {}) => {
+      const parsed = normalizePatternInput(raw);
+      if (!parsed || !parsed.pattern) return null;
+      const fRaw = typeof parsed.flags === 'string' ? parsed.flags : '';
+      let flags = fRaw || (typeof defaultFlags === 'string' ? defaultFlags : '');
+      if (forceGlobal && !flags.includes('g')) flags += 'g';
+      try {
+        return new RegExp(parsed.pattern, flags);
+      } catch (_e) {
+        return null;
+      }
+    };
+
+    const compileCleanRules = (rawRules, { queryTrailingDigits = '' } = {}) => {
+      const list = Array.isArray(rawRules) ? rawRules : [];
+      const out = [];
+      const tailDigits = typeof queryTrailingDigits === 'string' ? queryTrailingDigits : '';
+      list.forEach((rule) => {
+        const raw = typeof rule === 'string' ? rule.trim() : '';
+        if (!raw) return;
+        const re = buildRegexFromInput(raw, { defaultFlags: 'g', forceGlobal: true });
+        if (!re) return;
+        let isTrailingDigitsRule = false;
+        if (tailDigits) {
+          try {
+            // Heuristic: if this rule removes digits only when they are at the end of the string,
+            // treat it as a "trailing digits stripping" rule and allow skipping it for numeric queries.
+            const t1 = `x${tailDigits}`;
+            const t2 = `x${tailDigits}y`;
+            const r1 = t1.replace(re, '');
+            const r2 = t2.replace(re, '');
+            if (r1 === 'x' && r2 === t2) isTrailingDigitsRule = true;
+          } catch (_e) {
+            isTrailingDigitsRule = false;
+          }
+        }
+        out.push({ re, isTrailingDigitsRule });
+      });
+      return out;
+    };
+
+    const applyCleanRules = (text, rules, { skipTrailingDigitsRule = false } = {}) => {
+      let out = String(text || '');
+      const list = Array.isArray(rules) ? rules : [];
+      list.forEach((entry) => {
+        const re = entry && entry.re ? entry.re : entry;
+        const isTrailingDigitsRule = Boolean(entry && entry.isTrailingDigitsRule);
+        if (skipTrailingDigitsRule && isTrailingDigitsRule) return;
+        if (!re || typeof re !== 'object' || typeof re.test !== 'function') return;
+        try {
+          if (re && (re.global || re.sticky)) re.lastIndex = 0;
+        } catch (_e) {}
+        try {
+          out = out.replace(re, '');
+        } catch (_e) {}
+      });
+      return out;
+    };
+
+    // Used only for retrieving aggregated sources on the play page.
+    // Keep letters/numbers/CJK to be resilient against site-specific punctuation/emoji.
+    const normalizeAggStorageKey = (s) =>
+      String(s || '')
+        .toLowerCase()
+        .replace(/[^0-9a-z\u4e00-\u9fa5]+/gi, '')
+        .trim();
+
+    // Used for title grouping; keep more characters than storage key to reduce over-merging.
+    const normalizeForGroupKey = (s) =>
+      String(s || '')
+        .toLowerCase()
+        .replace(/[\u200b\u200c\u200d\ufeff]+/g, '')
+        // Only treat whitespace + punctuation separators as ignorable.
+        // Brackets/parentheses are preserved so users can control them via clean rules.
+        .replace(/[\s\.\-_,，:：;；!！?？·•/\\|]+/g, '')
+        .trim();
+
+    const normalizeDisplayTitle = (s) =>
+      String(s || '')
+        .replace(/[\u200b\u200c\u200d\ufeff]+/g, '')
+        // Only normalize whitespace + punctuation separators; preserve brackets/parentheses.
+        .replace(/[\s\.\-_,，:：;；!！?？·•/\\|]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const qTrailingDigitsMatch = q.match(/(\d+)\s*$/);
+    const qTrailingDigits = qTrailingDigitsMatch ? String(qTrailingDigitsMatch[1] || '') : '';
+    const compiledAggregateCleanRules = compileCleanRules(magicSearchCleanRules, { queryTrailingDigits: qTrailingDigits });
 
     const computeMatchScore = (title) => {
       const name = normalizeForMatch(title);
@@ -316,13 +416,13 @@ export function initSearchPage() {
       wrapperEl.dataset.score = String(score);
       wrapperEl.dataset.seq = String((insertSeq += 1));
       const wrapperScore = Number(wrapperEl.dataset.score || 0);
-      const wrapperOrder = Number(wrapperEl.dataset.siteOrder || 999999);
+      const wrapperTitleLen = Number(wrapperEl.dataset.titleLen || 0);
       const wrapperSeq = Number(wrapperEl.dataset.seq || 0);
       const children = Array.from(grid.children || []);
       for (let i = 0; i < children.length; i += 1) {
         const el = children[i];
         const elScore = Number(el && el.dataset ? el.dataset.score : 0);
-        const elOrder = Number(el && el.dataset ? el.dataset.siteOrder : 999999);
+        const elTitleLen = Number(el && el.dataset ? el.dataset.titleLen : 0);
         const elSeq = Number(el && el.dataset ? el.dataset.seq : 0);
 
         if (Number.isFinite(elScore) && elScore < wrapperScore) {
@@ -330,11 +430,11 @@ export function initSearchPage() {
           return;
         }
         if (Number.isFinite(elScore) && elScore === wrapperScore) {
-          if (Number.isFinite(elOrder) && elOrder > wrapperOrder) {
+          if (Number.isFinite(elTitleLen) && Number.isFinite(wrapperTitleLen) && elTitleLen > wrapperTitleLen) {
             grid.insertBefore(wrapperEl, el);
             return;
           }
-          if (Number.isFinite(elOrder) && elOrder === wrapperOrder && Number.isFinite(elSeq) && elSeq > wrapperSeq) {
+          if (Number.isFinite(elTitleLen) && Number.isFinite(wrapperTitleLen) && elTitleLen === wrapperTitleLen && Number.isFinite(elSeq) && elSeq > wrapperSeq) {
             grid.insertBefore(wrapperEl, el);
             return;
           }
@@ -360,42 +460,20 @@ export function initSearchPage() {
     let failed = 0;
     let totalFound = 0;
 
-    const aggregateBySite = new Map(); // siteKey -> { meta..., matches: Map(videoId -> source) }
-
     const seenKeys = new Set();
-    let aggregateEl = null;
-    let aggregateUniq = '';
-    let aggregateActive = false;
-    let aggregateSourceSiteCount = 0;
 
-    const removeExistingExactCards = (aggKey) => {
-      if (!aggKey) return 0;
+    const aggregateByGroup = new Map(); // groupKey -> { groupKey, title, bySite: Map(siteKey -> {meta..., matches: Map(videoId -> source)}) }
+    const aggregateCardByGroup = new Map(); // groupKey -> { el, uniq, sourceSiteCount, storageKey }
+
+    const removeExistingGroupCards = (groupKey) => {
+      if (!groupKey) return 0;
       let removed = 0;
       const children = Array.from(grid.children || []);
       children.forEach((el) => {
         if (!el || !el.dataset) return;
-        if (el.dataset.aggregate === '1') return;
         const tag = (el.dataset.titleAggKey || '').trim();
-        if (tag && tag === aggKey) {
-          try {
-            el.remove();
-            removed += 1;
-          } catch (_e) {}
-          return;
-        }
-        if ((el.dataset.exactMatch || '') === '1') {
-          try {
-            el.remove();
-            removed += 1;
-          } catch (_e) {}
-          return;
-        }
-        // Fallback: if a card was inserted without titleAggKey, infer from title text.
-        const titleEl = el.querySelector && el.querySelector('.douban-card-title');
-        const titleText = titleEl && titleEl.textContent ? String(titleEl.textContent) : '';
-        if (!titleText) return;
-        const inferred = normalizeForAggregateKey(titleText);
-        if (inferred !== aggKey && normalizeForMatch(titleText) !== qNorm) return;
+        if (!tag || tag !== groupKey) return;
+        if (el.dataset.aggregate === '1') return;
         try {
           el.remove();
           removed += 1;
@@ -442,58 +520,66 @@ export function initSearchPage() {
       return String(Math.max(0, Math.floor(n)));
     };
 
-    const applyAggregateSourceBadge = (count) => {
-      if (!aggregateEl) return;
-      const badge = aggregateEl.querySelector && aggregateEl.querySelector('.tv-aggregate-source-count');
+    const applyAggregateSourceBadge = (el, count) => {
+      if (!el) return;
+      const badge = el.querySelector && el.querySelector('.tv-aggregate-source-count');
       if (!badge) return;
       const n = Number.isFinite(Number(count)) ? Number(count) : 0;
       badge.textContent = formatSourceCountText(n);
       badge.title = `${Math.max(0, Math.floor(n))}个源`;
     };
 
-    const syncAggregateStorage = (cover, sources) => {
-      if (!cover || !cover.siteKey || !cover.videoId) return;
+    const syncAggregateStorage = (storageKey, cover, sources) => {
+      const key = typeof storageKey === 'string' ? storageKey.trim() : '';
+      if (!key || !cover || !cover.siteKey || !cover.videoId) return;
       try {
-        sessionStorage.setItem(
-          AGG_STORAGE_KEY,
-          JSON.stringify({
-            q,
-            key: qAggKey,
-            forSiteKey: cover.siteKey,
-            forVideoId: cover.videoId,
-            createdAt: Date.now(),
-            sources,
-          })
-        );
+        const prevRaw = sessionStorage.getItem(AGG_STORAGE_KEY) || '';
+        const prev = prevRaw && prevRaw.trim() ? JSON.parse(prevRaw) : null;
+        const groups = prev && prev.groups && typeof prev.groups === 'object' ? prev.groups : {};
+        groups[key] = {
+          createdAt: Date.now(),
+          forSiteKey: cover.siteKey,
+          forVideoId: cover.videoId,
+          sources,
+        };
+        sessionStorage.setItem(AGG_STORAGE_KEY, JSON.stringify({ version: 2, q, groups, lastKey: key }));
       } catch (_e) {}
     };
 
-    const ensureStreamingAggregateCard = () => {
-      if (!qAggKey) return;
-      const sources = Array.from(aggregateBySite.values()).flatMap((entry) => {
+    const ensureStreamingAggregateCardForGroup = (groupKey) => {
+      const gk = typeof groupKey === 'string' ? groupKey.trim() : '';
+      if (!gk) return;
+      const group = aggregateByGroup.get(gk);
+      if (!group || !group.bySite) return;
+
+      const bySite = group.bySite;
+      const sourceSiteCount = computeAggregateSourceSiteCount(bySite);
+      if (sourceSiteCount < 2) return;
+
+      const sources = Array.from(bySite.values()).flatMap((entry) => {
         if (!entry || !entry.matches) return [];
         return Array.from(entry.matches.values());
       });
-      const sourceSiteCount = computeAggregateSourceSiteCount(aggregateBySite);
-      const cover = pickAggregateCover(aggregateBySite);
+      const cover = pickAggregateCover(bySite);
       if (!cover || !cover.siteKey || !cover.videoId) return;
       if (sources.length < 1) return;
-      aggregateActive = true;
 
-      // Replace per-site exact matches with one aggregate card as soon as we have any exact match.
-      const removed = removeExistingExactCards(qAggKey);
+      // Replace per-site cards with one aggregate card as soon as we have >=2 sources.
+      const removed = removeExistingGroupCards(gk);
       if (removed) totalFound = Math.max(0, totalFound - removed);
-      const uniq = `${cover.siteKey}::${String(cover.videoId)}`;
 
-      // If the desired cover changed, remove the old aggregate card and allow re-insert.
-      if (aggregateEl && aggregateUniq && aggregateUniq !== uniq) {
+      const title = group && group.title ? String(group.title) : '';
+      const storageKey = normalizeAggStorageKey(title);
+      if (!storageKey) return;
+
+      const uniq = `${cover.siteKey}::${String(cover.videoId)}`;
+      const cached = aggregateCardByGroup.get(gk) || null;
+      if (cached && cached.el && cached.uniq && cached.uniq !== uniq) {
         try {
-          aggregateEl.remove();
+          cached.el.remove();
           totalFound = Math.max(0, totalFound - 1);
         } catch (_e) {}
-        aggregateEl = null;
-        aggregateUniq = '';
-        aggregateSourceSiteCount = 0;
+        aggregateCardByGroup.delete(gk);
       }
 
       // Ensure insertion isn't blocked by previous cards with the same uniq.
@@ -512,52 +598,53 @@ export function initSearchPage() {
         }
       });
 
-      if (!aggregateEl) {
-        syncAggregateStorage(cover, sources);
-        appendItemsToGrid({
-          gridEl: grid,
-          items: [
-            {
-              id: cover.videoId,
-              name: cover.videoTitle || q,
-              pic: cover.videoPoster || '',
-              remark: cover.videoRemark || '',
-            },
-          ],
-          siteKey: cover.siteKey,
-          siteApi: cover.spiderApi,
-          siteName: '',
-          cornerBadgeText: formatSourceCountText(sourceSiteCount),
-          cornerBadgeTitle: `${sourceSiteCount}个源`,
-          seenKeys,
-          insertCardSorted,
-          computeMatchScore,
-          siteOrderOverride: -1,
-          scoreOverride: 1e9,
-          isAggregate: true,
-        });
+      syncAggregateStorage(storageKey, cover, sources);
 
-        const after = Array.from(grid.children || []).find(
-          (el) =>
-            el &&
-            el.dataset &&
-            el.dataset.aggregate === '1' &&
-            el.dataset.siteKey === cover.siteKey &&
-            el.dataset.videoId === String(cover.videoId)
-        );
-        if (after) {
-          aggregateEl = after;
-          aggregateUniq = uniq;
-          totalFound += 1;
-          aggregateSourceSiteCount = sourceSiteCount;
-          applyAggregateSourceBadge(sourceSiteCount);
+      const existing = aggregateCardByGroup.get(gk) || null;
+      if (existing && existing.el) {
+        if (sourceSiteCount !== existing.sourceSiteCount) {
+          existing.sourceSiteCount = sourceSiteCount;
+          applyAggregateSourceBadge(existing.el, sourceSiteCount);
+          aggregateCardByGroup.set(gk, existing);
         }
-      } else {
-        syncAggregateStorage(cover, sources);
-        if (sourceSiteCount !== aggregateSourceSiteCount) {
-          aggregateSourceSiteCount = sourceSiteCount;
-          applyAggregateSourceBadge(sourceSiteCount);
-        }
+        return;
+      }
+
+      appendItemsToGrid({
+        gridEl: grid,
+        items: [
+          {
+            id: cover.videoId,
+            name: title || cover.videoTitle || '',
+            pic: cover.videoPoster || '',
+            remark: cover.videoRemark || '',
+            __groupKey: gk,
+          },
+        ],
+        siteKey: cover.siteKey,
+        siteApi: cover.spiderApi,
+        siteName: '',
+        cornerBadgeText: formatSourceCountText(sourceSiteCount),
+        cornerBadgeTitle: `${sourceSiteCount}个源`,
+        seenKeys,
+        insertCardSorted,
+        computeMatchScore,
+        isAggregate: true,
+      });
+
+      const after = Array.from(grid.children || []).find(
+        (el) =>
+          el &&
+          el.dataset &&
+          el.dataset.aggregate === '1' &&
+          (el.dataset.titleAggKey || '') === gk &&
+          el.dataset.siteKey === cover.siteKey &&
+          el.dataset.videoId === String(cover.videoId)
+      );
+      if (after) {
+        totalFound += 1;
+        applyAggregateSourceBadge(after, sourceSiteCount);
+        aggregateCardByGroup.set(gk, { el: after, uniq, sourceSiteCount, storageKey });
       }
     };
 
@@ -583,72 +670,88 @@ export function initSearchPage() {
           });
           if (runId !== currentRunId) return;
           const items = normalizeSearchList(data);
-          const exactMatches = [];
-          // Exact-match detection must scan the full list (not just the first 12 shown),
-          // otherwise an exact match can be pushed beyond the slice and both:
-          // - the aggregate card never appears
-          // - the per-site exact match is never visible
-          items.forEach((it) => {
-            const name = it && it.name ? String(it.name) : '';
-            const key = name ? normalizeForAggregateKey(name) : '';
-            const vid = it && it.id != null ? String(it.id) : '';
-            // 聚合采用“百分百匹配”：按 normalizeForMatch 做严格匹配（更稳健），避免部分站点返回不可见字符导致不等。
-            if (!qAggKey || !key) return;
-            if (normalizeForMatch(name) !== qNorm) return;
-            if (!vid) return;
-            exactMatches.push(it);
-          });
 
-          if (exactMatches.length && site && site.key) {
+          const sliced = items.slice(0, 12);
+          const groupKeysActivated = new Set();
+
+          const normalItems = sliced
+            .map((it) => {
+              const name = it && it.name ? String(it.name) : '';
+              const cleaned =
+                normalizeDisplayTitle(
+                  applyCleanRules(name, compiledAggregateCleanRules, { skipTrailingDigitsRule: Boolean(qTrailingDigits) })
+                ) || name;
+              const groupKey = normalizeForGroupKey(cleaned);
+              const groupKeySafe = groupKey || normalizeForGroupKey(name);
+              if (!groupKeySafe) return { ...it, __groupKey: '', __cleanTitle: cleaned || name };
+              return { ...it, __groupKey: groupKeySafe, __cleanTitle: cleaned || name };
+            })
+            .filter(Boolean);
+
+          // Update groups for this site.
+          if (site && site.key) {
             const sk = String(site.key);
-            const entry = aggregateBySite.get(sk) || {
-              siteKey: sk,
-              spiderApi: site.api,
-              siteName: site.name || site.key || '',
-              matches: new Map(),
-            };
-            exactMatches.forEach((m) => {
-              const vid = m && m.id ? String(m.id) : '';
-              if (!vid) return;
-              if (entry.matches.has(vid)) return;
-              entry.matches.set(vid, {
+            normalItems.forEach((it) => {
+              const vid = it && it.id != null ? String(it.id) : '';
+              const rawName = it && it.name ? String(it.name) : '';
+              const groupKey = it && it.__groupKey ? String(it.__groupKey) : '';
+              if (!sk || !vid || !groupKey || !rawName) return;
+
+              const group = aggregateByGroup.get(groupKey) || {
+                groupKey,
+                title: '',
+                bySite: new Map(),
+              };
+
+              const cleanedTitle = it && it.__cleanTitle ? String(it.__cleanTitle) : rawName;
+              const candidateTitle = normalizeDisplayTitle(cleanedTitle) || rawName;
+              if (!group.title || (candidateTitle && candidateTitle.length > 0 && candidateTitle.length < group.title.length)) {
+                group.title = candidateTitle;
+              }
+
+              const entry = group.bySite.get(sk) || {
                 siteKey: sk,
                 spiderApi: site.api,
                 siteName: site.name || site.key || '',
-                videoId: vid,
-                videoTitle: m && m.name ? String(m.name) : '',
-                videoPoster: m && m.pic ? String(m.pic) : '',
-                videoRemark: m && m.remark ? String(m.remark) : '',
-              });
+                matches: new Map(),
+              };
+              if (!entry.matches.has(vid)) {
+                entry.matches.set(vid, {
+                  siteKey: sk,
+                  spiderApi: site.api,
+                  siteName: site.name || site.key || '',
+                  videoId: vid,
+                  videoTitle: rawName,
+                  videoPoster: it && it.pic ? String(it.pic) : '',
+                  videoRemark: it && it.remark ? String(it.remark) : '',
+                });
+              }
+              group.bySite.set(sk, entry);
+              aggregateByGroup.set(groupKey, group);
             });
-            aggregateBySite.set(sk, entry);
-          }
 
-          // As soon as we have any exact match, show the aggregate card immediately (during search),
-          // before rendering this site's cards (so exact-match cards won't flash/stick).
-          ensureStreamingAggregateCard();
-
-          const sliced = items.slice(0, 12);
-          let normalItems = sliced.map((it) => ({
-            ...it,
-            __aggKey: it && it.name ? normalizeForAggregateKey(it.name) : '',
-            __exact: it && it.name ? normalizeForMatch(it.name) === qNorm : false,
-          }));
-
-          // 聚合触发后，所有“完全匹配”条目只进入聚合来源，不再作为普通卡片显示。
-          // 注意：不依赖 videoId；标题百分百匹配就不再单独显示。
-          // 仅在聚合卡片已激活时过滤：否则会导致“完全匹配”条目既不显示、聚合也未出现。
-          if (aggregateActive && qAggKey) {
-            normalItems = normalItems.filter((it) => {
-              if (!it) return false;
-              if (it.__exact) return false;
-              return true;
+            // After updating groups, activate aggregate cards for any group that now has >=2 sites.
+            normalItems.forEach((it) => {
+              const gk = it && it.__groupKey ? String(it.__groupKey) : '';
+              if (!gk) return;
+              const group = aggregateByGroup.get(gk);
+              if (!group || !group.bySite) return;
+              if (computeAggregateSourceSiteCount(group.bySite) < 2) return;
+              groupKeysActivated.add(gk);
+              ensureStreamingAggregateCardForGroup(gk);
             });
           }
+
+          // If a group is already aggregated, don't render per-site cards for it.
+          const filteredItems = normalItems.filter((it) => {
+            const gk = it && it.__groupKey ? String(it.__groupKey) : '';
+            if (!gk) return true;
+            return !aggregateCardByGroup.has(gk);
+          });
 
           totalFound += appendItemsToGrid({
             gridEl: grid,
-            items: normalItems,
+            items: filteredItems,
             siteKey: site.key,
             siteApi: site.api,
             siteName: site.name || site.key || '',
@@ -657,11 +760,11 @@ export function initSearchPage() {
             computeMatchScore,
           });
 
-          // Defensive: in concurrent runners, some exact-match cards can slip in
-          // between aggregate activation and this site's render. Re-run the
-          // aggregate reconciliation after appending so exact-match cards are
-          // promptly collapsed into the aggregate card during streaming search.
-          ensureStreamingAggregateCard();
+          // Defensive: concurrent runners can insert cards before aggregation activates.
+          // Re-run group aggregation after appending so duplicates collapse promptly.
+          if (groupKeysActivated.size) {
+            Array.from(groupKeysActivated.values()).forEach((gk) => ensureStreamingAggregateCardForGroup(gk));
+          }
         } catch (e) {
           if (runId !== currentRunId) return;
           failed += 1;
@@ -682,8 +785,10 @@ export function initSearchPage() {
     await Promise.allSettled(runners);
     if (runId !== currentRunId) return;
 
-    // Ensure aggregate card is present after the search ends too (in case the last runner discovered the first match).
-    ensureStreamingAggregateCard();
+    // Ensure aggregate cards are present after the search ends too (in case the last runner discovered a group).
+    for (const gk of aggregateByGroup.keys()) {
+      ensureStreamingAggregateCardForGroup(gk);
+    }
 
     updateSummary();
     if (!totalFound) {

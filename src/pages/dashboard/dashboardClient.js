@@ -6590,7 +6590,25 @@ export function initDashboardPage(bootstrap = {}) {
       return;
     }
 
-    setMagicAggregateTestOutput('success', `清洗后：${out}`);
+    // Keep the test output aligned with actual search aggregation behavior:
+    // - apply user clean rules
+    // - normalize whitespace + punctuation separators (not brackets)
+    const normalizeAggregateDisplay = (s) =>
+      String(s || '')
+        .replace(/[\u200b\u200c\u200d\ufeff]+/g, '')
+        .replace(/[\s.\-_,，:：;；!！?？·•/\\|]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const normalizeAggregateKey = (s) =>
+      String(s || '')
+        .toLowerCase()
+        .replace(/[\u200b\u200c\u200d\ufeff]+/g, '')
+        .replace(/[\s.\-_,，:：;；!！?？·•/\\|]+/g, '')
+        .trim();
+
+    const display = normalizeAggregateDisplay(out);
+    const key = normalizeAggregateKey(out);
+    setMagicAggregateTestOutput('success', `清洗后：${display}${key ? `（聚合Key：${key}）` : ''}`);
   };
 
   const fetchMagicSettings = async () => getSuccessJson('/dashboard/magic/settings');

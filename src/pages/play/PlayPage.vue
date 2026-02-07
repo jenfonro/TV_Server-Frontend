@@ -803,12 +803,15 @@ const loadAggregatedSourcesFromStorage = () => {
     const raw = sessionStorage.getItem(AGG_STORAGE_KEY);
     const parsed = raw && raw.trim() ? JSON.parse(raw) : null;
     const parsedKey = parsed && typeof parsed.key === 'string' ? parsed.key.trim() : '';
-    if (!parsedKey || parsedKey !== titleKey) {
+    const groups = parsed && parsed.groups && typeof parsed.groups === 'object' ? parsed.groups : null;
+    const group = groups && groups[titleKey] && typeof groups[titleKey] === 'object' ? groups[titleKey] : null;
+    const activeKey = group ? titleKey : parsedKey;
+    if (!activeKey || activeKey !== titleKey) {
       aggregatedSources.value = [];
       aggregatedFromStorage.value = false;
       return;
     }
-    const sources = parsed && Array.isArray(parsed.sources) ? parsed.sources : [];
+    const sources = group && Array.isArray(group.sources) ? group.sources : parsed && Array.isArray(parsed.sources) ? parsed.sources : [];
     const uniq = new Set();
     aggregatedSources.value = sources
       .map((s) => ({
